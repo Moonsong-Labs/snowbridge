@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2023 Snowfork <hello@snowfork.com>
 pragma solidity 0.8.28;
 
+import {console} from "forge-std/console.sol";
 import {MerkleProof} from "openzeppelin/utils/cryptography/MerkleProof.sol";
 import {ParachainVerification} from "./ParachainVerification.sol";
 import {BeefyVerification} from "./BeefyVerification.sol";
@@ -178,15 +179,9 @@ contract Gateway is IGateway, IInitializable, IUpgradable {
         // 2. Produce the parachain headers root that would be part of the `leafExtra` field of the MMR leaf
         // 3. Verify that the parachain headers root is part of an MMR leaf included in the latest finalized BEEFY MMR root
         {
-            bytes32 leafHash = keccak256(abi.encode(message));
-            bytes32 commitment = MerkleProof.processProof(messageProof, leafHash);
-
-            // Produce the parachain headers root that would be part of the `leafExtra` field of the MMR leaf
-            bytes32 parachainHeadersRoot =
-                ParachainVerification.processProof(BRIDGE_HUB_PARA_ID_ENCODED, commitment, headerProof);
-
-            // Verify that the parachain headers root is part of an MMR leaf included in the latest finalized BEEFY MMR root
-            if (!BeefyVerification.verifyBeefyMMRLeaf(BEEFY_CLIENT, parachainHeadersRoot, beefyProof)) {
+            bytes32 commitment = _buildMessageCommitment(message, messageProof);
+            bytes32 parachainHeadersRoot = _buildHeadersRoot(commitment, headerProof);
+            if (!_verifyBeefyProof(parachainHeadersRoot, beefyProof)) {
                 revert InvalidProof();
             }
         }
@@ -512,6 +507,34 @@ contract Gateway is IGateway, IInitializable, IUpgradable {
     // Reference: Ethereum Yellow Paper
     function _transactionBaseGas() internal pure returns (uint256) {
         return 21_000 + 14_698 + (msg.data.length * 16);
+    }
+
+    function _buildMessageCommitment(InboundMessage calldata message, bytes32[] calldata proof)
+        internal
+        pure
+        virtual
+        returns (bytes32)
+    {
+        bytes32 leafHash = keccak256(abi.encode(message));
+        return MerkleProof.processProof(proof, leafHash);
+    }
+
+    function _buildHeadersRoot(bytes32 messageCommitment, ParachainVerification.Proof calldata headerProof)
+        internal
+        view
+        virtual
+        returns (bytes32)
+    {
+        return ParachainVerification.processProof(BRIDGE_HUB_PARA_ID_ENCODED, messageCommitment, headerProof);
+    }
+
+    function _verifyBeefyProof(bytes32 parachainHeadersRoot, BeefyVerification.Proof calldata beefyProof)
+        internal
+        view
+        virtual
+        returns (bool)
+    {
+        return BeefyVerification.verifyBeefyMMRLeaf(BEEFY_CLIENT, parachainHeadersRoot, beefyProof);
     }
 
     // Convert foreign currency to native currency (ROC/KSM/DOT -> ETH)

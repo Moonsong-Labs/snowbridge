@@ -52,6 +52,29 @@ contract MockGateway is Gateway {
         commitmentsAreVerified = value;
     }
 
+    function _buildHeadersRoot(bytes32, ParachainVerification.Proof calldata)
+        internal
+        pure
+        override
+        returns (bytes32)
+    {
+        return bytes32(0);
+    }
+
+    function _verifyBeefyProof(bytes32 parachainHeadersRoot, BeefyVerification.Proof calldata beefyProof)
+        internal
+        view
+        override
+        returns (bool)
+    {
+        if (BEEFY_CLIENT != address(0)) {
+            return super._verifyBeefyProof(parachainHeadersRoot, beefyProof);
+        } else {
+            // for unit tests, verification is set with commitmentsAreVerified
+            return commitmentsAreVerified;
+        }
+    }
+
     function setTokenTransferFeesPublic(bytes calldata params) external {
         this.setTokenTransferFees(params);
     }
