@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2023 Snowfork <hello@snowfork.com>
 pragma solidity 0.8.28;
 
-import {console} from "forge-std/console.sol";
 import {MerkleProof} from "openzeppelin/utils/cryptography/MerkleProof.sol";
 import {ParachainVerification} from "./ParachainVerification.sol";
 import {BeefyVerification} from "./BeefyVerification.sol";
