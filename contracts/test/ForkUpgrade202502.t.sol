@@ -8,7 +8,8 @@ import {console} from "forge-std/console.sol";
 
 import {IUpgradable} from "../src/interfaces/IUpgradable.sol";
 import {IGateway} from "../src/interfaces/IGateway.sol";
-import {Verification} from "../src/Verification.sol";
+import {ParachainVerification} from "../src/ParachainVerification.sol";
+import {BeefyVerification} from "../src/BeefyVerification.sol";
 import {Gateway} from "../src/Gateway.sol";
 import {Gateway202502} from "../src/upgrades/Gateway202502.sol";
 import {AgentExecutor} from "../src/AgentExecutor.sol";
@@ -23,15 +24,19 @@ contract ForkUpgradeTest is Test {
     address private constant VERIFICATION_ADDR = 0x515c0817005b2F3383B7D8837d6DCc15c0d71C56;
     bytes32 private constant BRIDGE_HUB_AGENT_ID = 0x03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314;
 
-    ChannelID constant internal PRIMARY_GOVERNANCE_CHANNEL = ChannelID.wrap(0x0000000000000000000000000000000000000000000000000000000000000001);
-    ChannelID constant internal SECONDARY_GOVERNANCE_CHANNEL = ChannelID.wrap(0x0000000000000000000000000000000000000000000000000000000000000002);
+    ChannelID internal constant PRIMARY_GOVERNANCE_CHANNEL =
+        ChannelID.wrap(0x0000000000000000000000000000000000000000000000000000000000000001);
+    ChannelID internal constant SECONDARY_GOVERNANCE_CHANNEL =
+        ChannelID.wrap(0x0000000000000000000000000000000000000000000000000000000000000002);
 
     uint256 mainnetForkBlock21945142;
     uint256 mainnetForkBlock21960630;
 
     function setUp() public {
-        mainnetForkBlock21945142 = vm.createFork("https://rpc.tenderly.co/fork/cdff755d-46fc-47e2-8a9d-b1269fa86e72", 21945142);
-        mainnetForkBlock21960630 = vm.createFork("https://rpc.tenderly.co/fork/f0404b3b-e58f-4429-88b6-ea87414be30c", 21960630);
+        mainnetForkBlock21945142 =
+            vm.createFork("https://rpc.tenderly.co/fork/cdff755d-46fc-47e2-8a9d-b1269fa86e72", 21945142);
+        mainnetForkBlock21960630 =
+            vm.createFork("https://rpc.tenderly.co/fork/f0404b3b-e58f-4429-88b6-ea87414be30c", 21960630);
     }
 
     // Submit a cross-chain message to the upgraded Gateway, using a real-world data
@@ -42,7 +47,9 @@ contract ForkUpgradeTest is Test {
         // Mock call to Verification.verifyCommitment to bypass BEEFY verification.
         // Note that after the gateway is upgraded, the gateway will be linked to a new Verification
         // library, essentially undoing this mock.
-        vm.mockCall(VERIFICATION_ADDR, abi.encodeWithSelector(Verification.verifyCommitment.selector), abi.encode(true));
+        vm.mockCall(
+            VERIFICATION_ADDR, abi.encodeWithSelector(BeefyVerification.verifyBeefyMMRLeaf.selector), abi.encode(true)
+        );
 
         // Deploy new implementation contract
         Gateway202502 newLogic = new Gateway202502(
@@ -55,13 +62,14 @@ contract ForkUpgradeTest is Test {
         );
 
         // Prepare upgrade command
-        UpgradeParams memory params = UpgradeParams({
-            impl: address(newLogic),
-            implCodeHash: address(newLogic).codehash,
-            initParams: bytes("")
-        });
+        UpgradeParams memory params =
+            UpgradeParams({impl: address(newLogic), implCodeHash: address(newLogic).codehash, initParams: bytes("")});
 
-        (bytes32[] memory proof1, Verification.Proof memory proof2) = ForkTestFixtures.makeMockProofs();
+        (
+            bytes32[] memory messageProof,
+            ParachainVerification.Proof memory headerProof,
+            BeefyVerification.Proof memory beefyProof
+        ) = ForkTestFixtures.makeMockProofs();
         (uint64 nonce,) = IGateway(GATEWAY_PROXY).channelNoncesOf(PRIMARY_GOVERNANCE_CHANNEL);
 
         vm.expectEmit();
@@ -79,19 +87,18 @@ contract ForkUpgradeTest is Test {
                 0,
                 keccak256("message-id")
             ),
-            proof1,
-            proof2
+            messageProof,
+            headerProof,
+            beefyProof
         );
 
-        SubmitMessageFixture memory fixture = ForkTestFixtures.makeSubmitMessageFixture("/test/data/mainnet-gateway-submitv1.json");
+        SubmitMessageFixture memory fixture =
+            ForkTestFixtures.makeSubmitMessageFixture("/test/data/mainnet-gateway-submitv1.json");
 
         // Expect the gateway to emit InboundMessageDispatched event
         vm.expectEmit(true, true, true, true);
         emit IGateway.InboundMessageDispatched(
-            fixture.message.channelID,
-            fixture.message.nonce,
-            fixture.message.id,
-            true
+            fixture.message.channelID, fixture.message.nonce, fixture.message.id, true
         );
 
         address relayer = makeAddr("relayer");
@@ -99,9 +106,7 @@ contract ForkUpgradeTest is Test {
 
         vm.prank(relayer);
         IGateway(address(GATEWAY_PROXY)).submitV1(
-            fixture.message,
-            fixture.leafProof,
-            fixture.headerProof
+            fixture.message, fixture.messageProof, fixture.headerProof, fixture.beefyProof
         );
     }
 
@@ -112,7 +117,9 @@ contract ForkUpgradeTest is Test {
         // Mock call to Verification.verifyCommitment to bypass BEEFY verification.
         // Note that after the gateway is upgraded, the gateway will be linked to a new Verification
         // library, essentially undoing this mock.
-        vm.mockCall(VERIFICATION_ADDR, abi.encodeWithSelector(Verification.verifyCommitment.selector), abi.encode(true));
+        vm.mockCall(
+            VERIFICATION_ADDR, abi.encodeWithSelector(ParachainVerification.processProof.selector), abi.encode(true)
+        );
 
         // Prepare upgrade command
         UpgradeParams memory params = UpgradeParams({
@@ -121,7 +128,11 @@ contract ForkUpgradeTest is Test {
             initParams: bytes("")
         });
 
-        (bytes32[] memory proof1, Verification.Proof memory proof2) = ForkTestFixtures.makeMockProofs();
+        (
+            bytes32[] memory messageProof,
+            ParachainVerification.Proof memory headerProof,
+            BeefyVerification.Proof memory beefyProof
+        ) = ForkTestFixtures.makeMockProofs();
         (uint64 nonce,) = IGateway(GATEWAY_PROXY).channelNoncesOf(PRIMARY_GOVERNANCE_CHANNEL);
 
         vm.expectEmit();
@@ -139,8 +150,9 @@ contract ForkUpgradeTest is Test {
                 0,
                 keccak256("message-id")
             ),
-            proof1,
-            proof2
+            messageProof,
+            headerProof,
+            beefyProof
         );
     }
 }

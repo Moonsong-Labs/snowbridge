@@ -3,7 +3,8 @@
 pragma solidity 0.8.28;
 
 import {MerkleProof} from "openzeppelin/utils/cryptography/MerkleProof.sol";
-import {Verification} from "./Verification.sol";
+import {ParachainVerification} from "./ParachainVerification.sol";
+import {BeefyVerification} from "./BeefyVerification.sol";
 
 import {Assets} from "./Assets.sol";
 import {AgentExecutor} from "./AgentExecutor.sol";
@@ -147,14 +148,16 @@ contract Gateway is IGateway, IInitializable, IUpgradable {
         MAX_DESTINATION_FEE = maxDestinationFee;
     }
 
-    /// @dev Submit a message from Polkadot for verification and dispatch
-    /// @param message A message produced by the OutboundQueue pallet on BridgeHub
-    /// @param leafProof A message proof used to verify that the message is in the merkle tree committed by the OutboundQueue pallet
-    /// @param headerProof A proof that the commitment is included in parachain header that was finalized by BEEFY.
+    /// @dev Submit a message from the Substrate chain for verification and dispatch
+    /// @param message A message produced by the OutboundQueue pallet on the Substrate chain
+    /// @param messageProof A message proof used to verify that the message is in the merkle tree committed by the OutboundQueue pallet
+    /// @param headerProof A proof that the commitment is included in parachain header that is part of the parachain headers root in a BEEFY MMR leaf
+    /// @param beefyProof A proof that the there is a BEEFY MMR leaf that includes the parachain headers root in the latest finalized BEEFY MMR root
     function submitV1(
         InboundMessage calldata message,
-        bytes32[] calldata leafProof,
-        Verification.Proof calldata headerProof
+        bytes32[] calldata messageProof,
+        ParachainVerification.Proof calldata headerProof,
+        BeefyVerification.Proof calldata beefyProof
     ) external nonreentrant {
         uint256 startGas = gasleft();
 
@@ -170,13 +173,22 @@ contract Gateway is IGateway, IInitializable, IUpgradable {
         // again with the same (message, leafProof, headerProof) arguments.
         channel.inboundNonce++;
 
-        // Produce the commitment (message root) by applying the leaf proof to the message leaf
-        bytes32 leafHash = keccak256(abi.encode(message));
-        bytes32 commitment = MerkleProof.processProof(leafProof, leafHash);
+        // Verify the message proof in three steps:
+        // 1. Produce the commitment (message root) by applying the leaf proof to the message leaf
+        // 2. Produce the parachain headers root that would be part of the `leafExtra` field of the MMR leaf
+        // 3. Verify that the parachain headers root is part of an MMR leaf included in the latest finalized BEEFY MMR root
+        {
+            bytes32 leafHash = keccak256(abi.encode(message));
+            bytes32 commitment = MerkleProof.processProof(messageProof, leafHash);
 
-        // Verify that the commitment is included in a parachain header finalized by BEEFY.
-        if (!_verifyCommitment(commitment, headerProof)) {
-            revert InvalidProof();
+            // Produce the parachain headers root that would be part of the `leafExtra` field of the MMR leaf
+            bytes32 parachainHeadersRoot =
+                ParachainVerification.processProof(BRIDGE_HUB_PARA_ID_ENCODED, commitment, headerProof);
+
+            // Verify that the parachain headers root is part of an MMR leaf included in the latest finalized BEEFY MMR root
+            if (!BeefyVerification.verifyBeefyMMRLeaf(BEEFY_CLIENT, parachainHeadersRoot, beefyProof)) {
+                revert InvalidProof();
+            }
         }
 
         // Make sure relayers provide enough gas so that inner message dispatch
@@ -500,16 +512,6 @@ contract Gateway is IGateway, IInitializable, IUpgradable {
     // Reference: Ethereum Yellow Paper
     function _transactionBaseGas() internal pure returns (uint256) {
         return 21_000 + 14_698 + (msg.data.length * 16);
-    }
-
-    // Verify that a message commitment is considered finalized by our BEEFY light client.
-    function _verifyCommitment(bytes32 commitment, Verification.Proof calldata proof)
-        internal
-        view
-        virtual
-        returns (bool)
-    {
-        return Verification.verifyCommitment(BEEFY_CLIENT, BRIDGE_HUB_PARA_ID_ENCODED, commitment, proof);
     }
 
     // Convert foreign currency to native currency (ROC/KSM/DOT -> ETH)

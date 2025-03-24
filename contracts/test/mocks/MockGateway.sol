@@ -4,7 +4,8 @@ pragma solidity 0.8.28;
 import {Gateway} from "../../src/Gateway.sol";
 import {ChannelID, ParaID, OperatingMode} from "../../src/Types.sol";
 import {CoreStorage} from "../../src/storage/CoreStorage.sol";
-import {Verification} from "../../src/Verification.sol";
+import {ParachainVerification} from "../../src/ParachainVerification.sol";
+import {BeefyVerification} from "../../src/BeefyVerification.sol";
 import {IInitializable} from "../../src/interfaces/IInitializable.sol";
 
 import {UD60x18} from "prb/math/src/UD60x18.sol";
@@ -49,20 +50,6 @@ contract MockGateway is Gateway {
 
     function setCommitmentsAreVerified(bool value) external {
         commitmentsAreVerified = value;
-    }
-
-    function _verifyCommitment(bytes32 commitment, Verification.Proof calldata proof)
-        internal
-        view
-        override
-        returns (bool)
-    {
-        if (BEEFY_CLIENT != address(0)) {
-            return super._verifyCommitment(commitment, proof);
-        } else {
-            // for unit tests, verification is set with commitmentsAreVerified
-            return commitmentsAreVerified;
-        }
     }
 
     function setTokenTransferFeesPublic(bytes calldata params) external {
