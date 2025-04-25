@@ -8,19 +8,19 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.27.2
 	github.com/aws/aws-sdk-go-v2/config v1.27.18
 	github.com/cbroglie/mustache v1.4.0
-	github.com/ethereum/go-ethereum v1.15.5
+	github.com/ethereum/go-ethereum v1.15.9
 	github.com/ferranbt/fastssz v0.1.3
 	github.com/holiman/uint256 v1.3.2
 	github.com/magefile/mage v1.15.0
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/sirupsen/logrus v1.9.3
-	github.com/snowfork/go-substrate-rpc-client/v4 v4.1.1
+	github.com/snowfork/go-substrate-rpc-client/v4 v4.1.2-ffarall
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/exp v0.0.0-20240110193028-0dcbfd608b1e
-	golang.org/x/sync v0.10.0
+	golang.org/x/sync v0.11.0
 )
 
 require (
@@ -100,10 +100,10 @@ require (
 	github.com/vedhavyas/go-subkey v1.0.3 // indirect
 	github.com/yusufpapurcu/wmi v1.2.3 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.32.0
-	golang.org/x/net v0.34.0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/crypto v0.35.0
+	golang.org/x/net v0.36.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/npipe.v2 v2.0.0-20160621034901-c1b8fa8bdcce // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
@@ -111,6 +111,4 @@ require (
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
-replace (
-    github.com/snowfork/go-substrate-rpc-client/v4 => github.com/ffarall/go-substrate-rpc-client/v4 v4.1.1-ffarall
-)
+replace github.com/snowfork/go-substrate-rpc-client/v4 => github.com/ffarall/go-substrate-rpc-client/v4 v4.1.2-ffarall
