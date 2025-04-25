@@ -6,6 +6,7 @@ package secp256k1
 import (
 	"crypto/ecdsa"
 	"encoding/hex"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -24,7 +25,8 @@ type Keypair struct {
 }
 
 func NewKeypairFromPrivateKey(priv []byte) (*Keypair, error) {
-	return NewKeypairFromString(string(priv))
+	privHex := hex.EncodeToString(priv)
+	return NewKeypairFromString(privHex)
 }
 
 // NewKeypairFromString parses a string for a hex private key. Must be at least
@@ -57,16 +59,19 @@ func GenerateKeypair() (*Keypair, error) {
 
 // Encode dumps the private key as bytes
 func (kp *Keypair) Encode() []byte {
-	privateKeyBytes, _ := hex.DecodeString(kp.keyringPair.URI)
+	pureHexString := strings.TrimPrefix(kp.keyringPair.URI, "0x")
+	privateKeyBytes, _ := hex.DecodeString(pureHexString)
 	return privateKeyBytes
 }
 
 // Decode initializes the keypair using the input
 func (kp *Keypair) Decode(in []byte) error {
-	kp, err := NewKeypairFromPrivateKey(in)
+	decodedKeypair, err := NewKeypairFromPrivateKey(in)
 	if err != nil {
 		return err
 	}
+
+	kp.keyringPair = decodedKeypair.keyringPair
 
 	return nil
 }
