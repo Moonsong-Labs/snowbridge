@@ -7,6 +7,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/snowfork/go-substrate-rpc-client/v4/signature"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
 	"github.com/snowfork/snowbridge/relayer/chain/parachain"
 	"github.com/snowfork/snowbridge/relayer/chain/relaychain"
@@ -34,7 +35,7 @@ type Relay struct {
 	headerCache           *ethereum.HeaderCache
 }
 
-func NewRelay(config *Config, ethKeypair *secp256k1.Keypair, substrateKeypair *secp256k1.Keypair) (*Relay, error) {
+func NewRelay(config *Config, ethKeypair *secp256k1.Keypair, substrateKeypair *signature.KeyringPair) (*Relay, error) {
 	log.Info("Creating worker")
 
 	parachainConn := parachain.NewConnection(config.Source.Parachain.Endpoint, nil)
