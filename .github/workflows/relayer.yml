@@ -44,7 +44,7 @@ jobs:
       - name: Test
         working-directory: relayer
         run: go test -v ./...
-        
+
       - name: Upload relayer binary
         uses: actions/upload-artifact@v4
         with:
@@ -73,3 +73,25 @@ jobs:
 
       - name: Test Docker image with --help
         run: docker run --rm snowbridge-relayer:local --help
+
+  docker-publish:
+    needs: docker-build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build and (optionally) push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./relayer
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/solochain' }}
+          tags: |
+            docker.io/moonsonglab/snowbridge-relayer:${{ (github.event_name == 'push' && github.ref == 'refs/heads/solochain' && 'latest') || (github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)) || (github.event_name == 'push' && github.ref_name) || github.sha }}
