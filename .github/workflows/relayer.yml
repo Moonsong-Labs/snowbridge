@@ -101,9 +101,31 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
+      - name: Determine Docker tag value
+        id: docker_tag_value
+        shell: bash
+        run: |
+          # If the event is a push to solochain, use the latest tag.
+          # If the event is a pull request, use the source branch name.
+
+          TAG_VALUE=""
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG_VALUE="latest"
+          else 
+            TAG_VALUE="${{ github.head_ref }}" # Use the source branch name for PRs.
+          fi
+
+          SANITIZED_TAG_VALUE=$(echo "$TAG_VALUE" | sed 's/\\//-/g' | sed 's/[^a-zA-Z0-9._-]/-/g')
+
+          if [[ -z "$SANITIZED_TAG_VALUE" ]]; then
+            SANITIZED_TAG_VALUE="ci-${{ github.run_id }}"
+          fi
+
+          echo "value=${SANITIZED_TAG_VALUE}" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: ./relayer
           push: true
-          tags: moonsonglabs/snowbridge-relay:latest
+          tags: moonsonglabs/snowbridge-relayer:${{ steps.docker_tag_value.outputs.value }}
