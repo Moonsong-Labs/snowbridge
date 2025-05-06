@@ -80,6 +80,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Download relayer binary
+        uses: actions/download-artifact@v4
+        with:
+          name: relayer-binary
+          path: relayer/
+
+      - name: Make relayer binary executable
+        run: chmod +x relayer/relayer
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to Docker Hub
@@ -92,6 +101,6 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./relayer
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/solochain' }}
+          push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/solochain') || github.event_name == 'pull_request' }}
           tags: |
             docker.io/moonsonglab/snowbridge-relayer:${{ (github.event_name == 'push' && github.ref == 'refs/heads/solochain' && 'latest') || (github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)) || (github.event_name == 'push' && github.ref_name) || github.sha }}
