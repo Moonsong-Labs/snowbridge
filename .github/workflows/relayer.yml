@@ -48,8 +48,8 @@ jobs:
       - name: Upload relayer binary
         uses: actions/upload-artifact@v4
         with:
-          name: relayer-binary
-          path: relayer/relayer
+          name: snowbridge-relay
+          path: relayer/build/snowbridge-relay
 
   docker-build-and-test:
     needs: build-and-test
@@ -61,18 +61,18 @@ jobs:
       - name: Download relayer binary
         uses: actions/download-artifact@v4
         with:
-          name: relayer-binary
-          path: relayer/
+          name: snowbridge-relay
+          path: relayer/build
 
       - name: Make relayer binary executable
-        run: chmod +x relayer/relayer
+        run: chmod +x relayer/build/snowbridge-relay
 
       - name: Run build-local-docker.sh
         working-directory: relayer
         run: ./build-local-docker.sh
 
       - name: Test Docker image with --help
-        run: docker run --rm snowbridge-relayer:local --help
+        run: docker run --rm snowbridge-relay:local --help
 
   docker-publish:
     needs: docker-build-and-test
@@ -83,11 +83,11 @@ jobs:
       - name: Download relayer binary
         uses: actions/download-artifact@v4
         with:
-          name: relayer-binary
-          path: relayer/
+          name: snowbridge-relay
+          path: relayer/build
 
       - name: Make relayer binary executable
-        run: chmod +x relayer/relayer
+        run: chmod +x relayer/build/snowbridge-relay
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -103,4 +103,4 @@ jobs:
           context: ./relayer
           push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/solochain') || github.event_name == 'pull_request' }}
           tags: |
-            docker.io/moonsonglab/snowbridge-relayer:${{ (github.event_name == 'push' && github.ref == 'refs/heads/solochain' && 'latest') || (github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)) || (github.event_name == 'push' && github.ref_name) || github.sha }}
+            docker.io/moonsonglab/snowbridge-relay:${{ (github.event_name == 'push' && github.ref == 'refs/heads/solochain' && 'latest') || (github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)) || (github.event_name == 'push' && github.ref_name) || github.sha }}
