@@ -2,13 +2,7 @@ name: relayer
 
 on:
   push:
-    paths:
-      - "relayer/**"
-    branches:
-      - main
   pull_request:
-    paths:
-      - "relayer/**"
 
 jobs:
   

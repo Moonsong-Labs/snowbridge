@@ -2,15 +2,7 @@ name: contracts
 
 on:
   push:
-    paths:
-      - "contracts/**"
-      - "!contracts/**/README.md"
-    branches:
-      - main
   pull_request:
-    paths:
-      - "contracts/**"
-      - "!contracts/**/README.md"
 
 jobs:
   build:
