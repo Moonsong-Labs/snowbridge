@@ -2,7 +2,6 @@ package parachain
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/big"
@@ -118,24 +117,13 @@ func (wr *EthereumWriter) WriteChannel(
 ) error {
 	message := commitmentProof.Message.IntoInboundMessage()
 
-	convertedHeader, err := convertHeader(proof.Header)
-	if err != nil {
-		return fmt.Errorf("convert header: %w", err)
-	}
-
 	var merkleProofItems [][32]byte
 	for _, proofItem := range proof.MMRProof.MerkleProofItems {
 		merkleProofItems = append(merkleProofItems, proofItem)
 	}
 
-	verificationProof := contracts.VerificationProof{
-		Header: *convertedHeader,
-		HeadProof: contracts.VerificationHeadProof{
-			Pos:   big.NewInt(proof.MerkleProofData.ProvenLeafIndex),
-			Width: big.NewInt(int64(proof.MerkleProofData.NumberOfLeaves)),
-			Proof: proof.MerkleProofData.Proof,
-		},
-		LeafPartial: contracts.VerificationMMRLeafPartial{
+	beefyProof := contracts.BeefyVerificationProof{
+		LeafPartial: contracts.BeefyVerificationMMRLeafPartial{
 			Version:              uint8(proof.MMRProof.Leaf.Version),
 			ParentNumber:         uint32(proof.MMRProof.Leaf.ParentNumberAndHash.ParentNumber),
 			ParentHash:           proof.MMRProof.Leaf.ParentNumberAndHash.Hash,
@@ -153,7 +141,7 @@ func (wr *EthereumWriter) WriteChannel(
 	}
 
 	tx, err := wr.gateway.V2Submit(
-		options, message, commitmentProof.Proof.InnerHashes, verificationProof, rewardAddress,
+		options, message, commitmentProof.Proof.InnerHashes, beefyProof, rewardAddress,
 	)
 	if err != nil {
 		return fmt.Errorf("send transaction Gateway.submit: %w", err)
@@ -165,7 +153,7 @@ func (wr *EthereumWriter) WriteChannel(
 		return fmt.Errorf("encode MMRLeaf: %w", err)
 	}
 	log.WithField("txHash", tx.Hash().Hex()).
-		WithField("params", wr.logFieldsForSubmission(message, commitmentProof.Proof.InnerHashes, verificationProof)).
+		WithField("params", wr.logFieldsForSubmission(message, commitmentProof.Proof.InnerHashes, beefyProof)).
 		WithFields(log.Fields{
 			"commitmentHash":       commitmentProof.Proof.Root.Hex(),
 			"MMRRoot":              proof.MMRRootHash.Hex(),
@@ -199,52 +187,4 @@ func (wr *EthereumWriter) WriteChannel(
 	}
 
 	return nil
-}
-
-func convertHeader(header gsrpcTypes.Header) (*contracts.VerificationParachainHeader, error) {
-	var digestItems []contracts.VerificationDigestItem
-
-	for _, di := range header.Digest {
-		switch {
-		case di.IsOther:
-			digestItems = append(digestItems, contracts.VerificationDigestItem{
-				Kind: big.NewInt(0),
-				Data: di.AsOther,
-			})
-		case di.IsPreRuntime:
-			consensusEngineID := make([]byte, 4)
-			binary.LittleEndian.PutUint32(consensusEngineID, uint32(di.AsPreRuntime.ConsensusEngineID))
-			digestItems = append(digestItems, contracts.VerificationDigestItem{
-				Kind:              big.NewInt(6),
-				ConsensusEngineID: *(*[4]byte)(consensusEngineID),
-				Data:              di.AsPreRuntime.Bytes,
-			})
-		case di.IsConsensus:
-			consensusEngineID := make([]byte, 4)
-			binary.LittleEndian.PutUint32(consensusEngineID, uint32(di.AsConsensus.ConsensusEngineID))
-			digestItems = append(digestItems, contracts.VerificationDigestItem{
-				Kind:              big.NewInt(4),
-				ConsensusEngineID: *(*[4]byte)(consensusEngineID),
-				Data:              di.AsConsensus.Bytes,
-			})
-		case di.IsSeal:
-			consensusEngineID := make([]byte, 4)
-			binary.LittleEndian.PutUint32(consensusEngineID, uint32(di.AsSeal.ConsensusEngineID))
-			digestItems = append(digestItems, contracts.VerificationDigestItem{
-				Kind:              big.NewInt(5),
-				ConsensusEngineID: *(*[4]byte)(consensusEngineID),
-				Data:              di.AsSeal.Bytes,
-			})
-		default:
-			return nil, fmt.Errorf("Unsupported digest item: %v", di)
-		}
-	}
-
-	return &contracts.VerificationParachainHeader{
-		ParentHash:     header.ParentHash,
-		Number:         big.NewInt(int64(header.Number)),
-		StateRoot:      header.StateRoot,
-		ExtrinsicsRoot: header.ExtrinsicsRoot,
-		DigestItems:    digestItems,
-	}, nil
 }

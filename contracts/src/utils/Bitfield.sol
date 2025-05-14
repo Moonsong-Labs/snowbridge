@@ -136,7 +136,7 @@ library Bitfield {
         if (length == 0) {
             return 0;
         }
-        
+
         assembly {
             mstore(0x00, seed)
             mstore(0x20, iteration)

@@ -2,7 +2,9 @@ package parachain
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -263,7 +265,13 @@ func (wr *ParachainWriter) writeToParachain(ctx context.Context, extrinsicName s
 }
 
 func (wr *ParachainWriter) queryAccountNonce() (uint32, error) {
-	key, err := types.CreateStorageKey(wr.conn.Metadata(), "System", "Account", wr.conn.Keypair().PublicKey, nil)
+	addressHexString := strings.TrimPrefix(wr.conn.Keypair().Address, "0x")
+	addressAsBytes, err := hex.DecodeString(addressHexString)
+	if err != nil {
+		return 0, err
+	}
+
+	key, err := types.CreateStorageKey(wr.conn.Metadata(), "System", "Account", addressAsBytes, nil)
 	if err != nil {
 		return 0, err
 	}
