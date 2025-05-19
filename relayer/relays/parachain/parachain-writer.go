@@ -1,4 +1,4 @@
-package parachain
+package solochain
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
+	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
 	"github.com/snowfork/snowbridge/relayer/chain/parachain"
 	"github.com/snowfork/snowbridge/relayer/contracts"
@@ -19,6 +20,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// startDeliverProof starts a goroutine that delivers proofs for undelivered orders on solochain
 func (relay *Relay) startDeliverProof(ctx context.Context, eg *errgroup.Group) error {
 	eg.Go(func() error {
 		for {
@@ -28,24 +30,27 @@ func (relay *Relay) startDeliverProof(ctx context.Context, eg *errgroup.Group) e
 			case <-time.After(60 * time.Second):
 				orders, err := relay.beefyListener.scanner.findOrderUndelivered(ctx)
 				if err != nil {
-					return fmt.Errorf("find undelivered order: %w", err)
+					return fmt.Errorf("Error finding undelivered orders on solochain: %v", err)
 				}
 				rewardAddress, err := util.HexStringTo32Bytes(relay.config.RewardAddress)
 				if err != nil {
-					return fmt.Errorf("convert to reward address: %w", err)
+					return fmt.Errorf("Converting reward address string to address: %w", err)
 				}
 				for _, order := range orders {
 					event, err := relay.findEvent(ctx, order.Nonce)
 					if err != nil {
-						return fmt.Errorf("find event GatewayInboundMessageDispatched: %w", err)
+						return fmt.Errorf("Error finding GatewayInboundMessageDispatched event for nonce %d: %v", order.Nonce, err)
 					}
 					if event.RewardAddress != rewardAddress {
-						log.Info("order is not from the current relayer, just ignore")
+						log.Infof("Order nonce %d not relayed by this relayer (event reward address %s vs relayer reward address %s), skipping delivery proof.",
+							order.Nonce,
+							types.HexEncodeToString(event.RewardAddress[:]),
+							types.HexEncodeToString(rewardAddress[:]))
 						continue
 					}
-					err = relay.doSubmit(ctx, event)
+					err = relay.doSubmitDeliveryProof(ctx, event)
 					if err != nil {
-						return fmt.Errorf("submit delivery proof for GatewayInboundMessageDispatched: %w", err)
+						return fmt.Errorf("Error submitting delivery proof for nonce %d to solochain: %v", order.Nonce, err)
 					}
 				}
 			}
@@ -54,6 +59,7 @@ func (relay *Relay) startDeliverProof(ctx context.Context, eg *errgroup.Group) e
 	return nil
 }
 
+// findEvent finds the GatewayInboundMessageDispatched event for a given nonce
 func (relay *Relay) findEvent(
 	ctx context.Context,
 	nonce uint64,
@@ -63,13 +69,16 @@ func (relay *Relay) findEvent(
 
 	var event *contracts.GatewayInboundMessageDispatched
 
+	// Get the latest block number from Ethereum
 	blockNumber, err := relay.ethereumConnWriter.Client().BlockNumber(ctx)
 	if err != nil {
-		return event, fmt.Errorf("get last block number: %w", err)
+		return event, fmt.Errorf("Getting last ethereum block number: %w", err)
 	}
 
+	// Search for the event in the last BlocksPerQuery blocks
 	done := false
 
+	// Start from the latest block and search backwards
 	for {
 		var begin uint64
 		if blockNumber < BlocksPerQuery {
@@ -119,6 +128,7 @@ func (relay *Relay) findEvent(
 	return event, nil
 }
 
+// makeInboundMessage creates a solochain message from an Ethereum event
 func (relay *Relay) makeInboundMessage(
 	ctx context.Context,
 	headerCache *ethereum.HeaderCache,
@@ -154,10 +164,12 @@ func (relay *Relay) makeInboundMessage(
 	return msg, nil
 }
 
-func (relay *Relay) doSubmit(ctx context.Context, ev *contracts.GatewayInboundMessageDispatched) error {
+// doSubmitDeliveryProof submits a delivery proof to solochain
+func (relay *Relay) doSubmitDeliveryProof(ctx context.Context, ev *contracts.GatewayInboundMessageDispatched) error {
+	// Make an inbound message from the Ethereum event
 	inboundMsg, err := relay.makeInboundMessage(ctx, relay.headerCache, ev)
 	if err != nil {
-		return fmt.Errorf("make outgoing message: %w", err)
+		return fmt.Errorf("Making inbound message for solochain delivery receipt: %w", err)
 	}
 
 	logger := log.WithFields(log.Fields{
@@ -170,33 +182,35 @@ func (relay *Relay) doSubmit(ctx context.Context, ev *contracts.GatewayInboundMe
 		"txIndex":     ev.Raw.TxIndex,
 	})
 
+	// Get the next block header
 	nextBlockNumber := new(big.Int).SetUint64(ev.Raw.BlockNumber + 1)
-
 	blockHeader, err := relay.ethereumConnWriter.Client().HeaderByNumber(ctx, nextBlockNumber)
 	if err != nil {
-		return fmt.Errorf("get block header: %w", err)
+		return fmt.Errorf("Getting ethereum block header %d: %w", nextBlockNumber, err)
 	}
 
-	proof, err := relay.beaconHeader.FetchExecutionProof(*blockHeader.ParentBeaconRoot, false)
-	if errors.Is(err, header.ErrBeaconHeaderNotFinalized) || proof.HeaderPayload.ExecutionBranch == nil {
-		logger.Info("event block is not finalized yet")
+	// Fetch the beacon proof of the event block
+	beaconProof, err := relay.beaconHeader.FetchExecutionProof(*blockHeader.ParentBeaconRoot, false)
+	if errors.Is(err, header.ErrBeaconHeaderNotFinalized) || beaconProof.HeaderPayload.ExecutionBranch == nil {
+		logger.Infof("Ethereum event block %d is not yet finalized on Beacon chain for delivery proof. Will retry later.", ev.Raw.BlockNumber)
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("fetch execution header proof: %w", err)
+		return fmt.Errorf("Fetching ethereum execution header proof: %w", err)
 	}
 
-	err = relay.writeToParachain(ctx, proof, inboundMsg)
+	err = relay.writeToSolochain(ctx, beaconProof, inboundMsg)
 	if err != nil {
-		return fmt.Errorf("write to parachain: %w", err)
+		return fmt.Errorf("Writing delivery receipt to solochain: %w", err)
 	}
 
-	logger.Info("v2 inbound message executed successfully")
+	logger.Info("V2 delivery receipt for message (nonce %d) submitted successfully to solochain.", ev.Nonce)
 
 	return nil
 }
 
-func (relay *Relay) writeToParachain(ctx context.Context, proof scale.ProofPayload, inboundMsg *parachain.Message) error {
+// writeToSolochain writes a delivery receipt to solochain
+func (relay *Relay) writeToSolochain(ctx context.Context, proof scale.ProofPayload, inboundMsg *parachain.Message) error {
 	inboundMsg.Proof.ExecutionProof = proof.HeaderPayload
 
 	log.WithFields(logrus.Fields{
@@ -204,9 +218,9 @@ func (relay *Relay) writeToParachain(ctx context.Context, proof scale.ProofPaylo
 		"Proof":    inboundMsg.Proof,
 	}).Debug("Generated message from Ethereum log")
 
-	err := relay.parachainWriter.WriteToParachainAndWatch(ctx, "EthereumOutboundQueueV2.submit_delivery_receipt", inboundMsg)
+	err := relay.solochainWriter.WriteToParachainAndWatch(ctx, "EthereumOutboundQueueV2.submit_delivery_receipt", inboundMsg)
 	if err != nil {
-		return fmt.Errorf("submit message to outbound queue v2: %w", err)
+		return fmt.Errorf("Submitting delivery receipt to solochain outbound queue v2: %w", err)
 	}
 
 	return nil

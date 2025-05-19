@@ -1,4 +1,4 @@
-package parachain
+package solochain
 
 import (
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"

@@ -1,4 +1,4 @@
-package parachain
+package solochain
 
 import (
 	"context"
@@ -14,7 +14,6 @@ import (
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
 	"github.com/snowfork/snowbridge/relayer/chain/parachain"
-	"github.com/snowfork/snowbridge/relayer/chain/relaychain"
 	"github.com/snowfork/snowbridge/relayer/contracts"
 	"github.com/snowfork/snowbridge/relayer/crypto/merkle"
 	"github.com/snowfork/snowbridge/relayer/ofac"
@@ -27,10 +26,8 @@ type BeefyListener struct {
 	scheduleConfig      *ScheduleConfig
 	ethereumConn        *ethereum.Connection
 	beefyClientContract *contracts.BeefyClient
-	relaychainConn      *relaychain.Connection
-	parachainConnection *parachain.Connection
+	solochainConn       *parachain.Connection
 	ofac                *ofac.OFAC
-	paraID              uint32
 	tasks               chan<- *Task
 	scanner             *Scanner
 }
@@ -39,19 +36,17 @@ func NewBeefyListener(
 	config *SourceConfig,
 	scheduleConfig *ScheduleConfig,
 	ethereumConn *ethereum.Connection,
-	relaychainConn *relaychain.Connection,
-	parachainConnection *parachain.Connection,
+	solochainConn *parachain.Connection,
 	ofac *ofac.OFAC,
 	tasks chan<- *Task,
 ) *BeefyListener {
 	return &BeefyListener{
-		config:              config,
-		scheduleConfig:      scheduleConfig,
-		ethereumConn:        ethereumConn,
-		relaychainConn:      relaychainConn,
-		parachainConnection: parachainConnection,
-		ofac:                ofac,
-		tasks:               tasks,
+		config:         config,
+		scheduleConfig: scheduleConfig,
+		ethereumConn:   ethereumConn,
+		solochainConn:  solochainConn,
+		ofac:           ofac,
+		tasks:          tasks,
 	}
 }
 
@@ -64,43 +59,27 @@ func (li *BeefyListener) Start(ctx context.Context, eg *errgroup.Group) error {
 	}
 	li.beefyClientContract = beefyClientContract
 
-	// fetch ParaId
-	paraIDKey, err := types.CreateStorageKey(li.parachainConnection.Metadata(), "ParachainInfo", "ParachainId", nil, nil)
-	if err != nil {
-		return err
-	}
-	var paraID uint32
-	ok, err := li.parachainConnection.API().RPC.State.GetStorageLatest(paraIDKey, &paraID)
-	if err != nil {
-		return fmt.Errorf("fetch parachain id: %w", err)
-	}
-	if !ok {
-		return fmt.Errorf("parachain id missing")
-	}
-	li.paraID = paraID
-
 	li.scanner = &Scanner{
-		config:    li.config,
-		ethConn:   li.ethereumConn,
-		relayConn: li.relaychainConn,
-		paraConn:  li.parachainConnection,
-		paraID:    paraID,
-		ofac:      li.ofac,
+		config:   li.config,
+		ethConn:  li.ethereumConn,
+		soloConn: li.solochainConn,
+		ofac:     li.ofac,
 	}
 
 	eg.Go(func() error {
 		defer close(li.tasks)
 
-		// Subscribe NewMMRRoot event logs and fetch parachain message commitments
+		// Subscribe NewMMRRoot event logs and fetch solochain message commitments
 		// since latest beefy block
 		beefyBlockNumber, _, err := li.fetchLatestBeefyBlock(ctx)
 		if err != nil {
 			return fmt.Errorf("fetch latest beefy block: %w", err)
 		}
 
+		log.Infof("Initial scan up to solochain beefy block %d (latest verified on Ethereum)", beefyBlockNumber)
 		err = li.doScan(ctx, beefyBlockNumber)
 		if err != nil {
-			return fmt.Errorf("scan for sync tasks bounded by BEEFY block %v: %w", beefyBlockNumber, err)
+			return fmt.Errorf("Initial scan for sync tasks bounded by BEEFY block %v: %w", beefyBlockNumber, err)
 		}
 
 		err = li.subscribeNewMMRRoots(ctx)
@@ -108,7 +87,7 @@ func (li *BeefyListener) Start(ctx context.Context, eg *errgroup.Group) error {
 			if errors.Is(err, context.Canceled) {
 				return nil
 			}
-			return err
+			return fmt.Errorf("Subscribing to new MMR roots: %w", err)
 		}
 
 		return nil
@@ -117,6 +96,7 @@ func (li *BeefyListener) Start(ctx context.Context, eg *errgroup.Group) error {
 	return nil
 }
 
+// subscribeNewMMRRoots subscribes to new MMR roots on Ethereum
 func (li *BeefyListener) subscribeNewMMRRoots(ctx context.Context) error {
 	headers := make(chan *gethTypes.Header, 5)
 
@@ -136,7 +116,7 @@ func (li *BeefyListener) subscribeNewMMRRoots(ctx context.Context) error {
 			blockNumber := gethheader.Number.Uint64()
 			contractEvents, err := li.queryBeefyClientEvents(ctx, blockNumber, &blockNumber)
 			if err != nil {
-				return fmt.Errorf("query NewMMRRoot event logs in block %v: %w", blockNumber, err)
+				return fmt.Errorf("Failed to query NewMMRRoot event logs in block %v: %v", blockNumber, err)
 			}
 
 			if len(contractEvents) > 0 {
@@ -151,24 +131,25 @@ func (li *BeefyListener) subscribeNewMMRRoots(ctx context.Context) error {
 
 				err = li.doScan(ctx, event.BlockNumber)
 				if err != nil {
-					return fmt.Errorf("scan for sync tasks bounded by BEEFY block %v: %w", event.BlockNumber, err)
+					return fmt.Errorf("Scan for sync tasks bounded by BEEFY block %v failed: %w", event.BlockNumber, err)
 				}
 			}
 		}
 	}
 }
 
+// doScan scans for sync tasks bounded by a BEEFY block number
 func (li *BeefyListener) doScan(ctx context.Context, beefyBlockNumber uint64) error {
 	tasks, err := li.scanner.Scan(ctx, beefyBlockNumber)
 	if err != nil {
 		return err
 	}
 	for _, task := range tasks {
-		paraNonce := (*task.MessageProofs)[0].Message.Nonce
-		waitingPeriod := (uint64(paraNonce) + li.scheduleConfig.TotalRelayerCount - li.scheduleConfig.ID) % li.scheduleConfig.TotalRelayerCount
+		solochainNonce := (*task.MessageProofs)[0].Message.Nonce
+		waitingPeriod := (uint64(solochainNonce) + li.scheduleConfig.TotalRelayerCount - li.scheduleConfig.ID) % li.scheduleConfig.TotalRelayerCount
 		err = li.waitAndSend(ctx, task, waitingPeriod)
 		if err != nil {
-			return fmt.Errorf("wait task for nonce %d: %w", paraNonce, err)
+			return fmt.Errorf("Failed to wait for task for nonce %d: %w", solochainNonce, err)
 		}
 	}
 
@@ -204,48 +185,44 @@ func (li *BeefyListener) queryBeefyClientEvents(
 	return events, nil
 }
 
-// Fetch the latest verified beefy block number and hash from Ethereum
+// fetchLatestBeefyBlock fetches the latest verified solochain BEEFY block number and hash from the BeefyClient contract on Ethereum
 func (li *BeefyListener) fetchLatestBeefyBlock(ctx context.Context) (uint64, types.Hash, error) {
-	number, err := li.beefyClientContract.LatestBeefyBlock(&bind.CallOpts{
+	beefyBlockNumber, err := li.beefyClientContract.LatestBeefyBlock(&bind.CallOpts{
 		Pending: false,
 		Context: ctx,
 	})
 	if err != nil {
-		return 0, types.Hash{}, fmt.Errorf("fetch latest beefy block from light client: %w", err)
+		return 0, types.Hash{}, fmt.Errorf("Fetching latest BEEFY block from light client: %w", err)
 	}
 
-	hash, err := li.relaychainConn.API().RPC.Chain.GetBlockHash(number)
+	beefyBlockHash, err := li.solochainConn.API().RPC.Chain.GetBlockHash(beefyBlockNumber)
 	if err != nil {
-		return 0, types.Hash{}, fmt.Errorf("fetch block hash: %w", err)
+		return 0, types.Hash{}, fmt.Errorf("Fetching BEEFY block hash for block %d: %w", beefyBlockNumber, err)
 	}
 
-	return number, hash, nil
+	return beefyBlockNumber, beefyBlockHash, nil
 }
 
-// The maximum paras that will be included in the proof.
-// https://github.com/paritytech/polkadot-sdk/blob/d66dee3c3da836bcf41a12ca4e1191faee0b6a5b/polkadot/runtime/parachains/src/paras/mod.rs#L1225-L1232
-const MaxParaHeads = 1024
-
-// Generates a proof for an MMR leaf, and then generates a merkle proof for our parachain header, which should be verifiable against the
-// parachains root in the mmr leaf.
-func (li *BeefyListener) generateProof(ctx context.Context, input *ProofInput, header *types.Header) (*ProofOutput, error) {
+// Generates a proof for an MMR leaf, and then generates a merkle proof for our message commitment, which should be verifiable against the
+// message commitment root found in the `extra` field of the BEEFY MMR leaf.
+func (li *BeefyListener) generateProof(ctx context.Context, input *ProofInput, solochainHeaderWithCommitment *types.Header) (*ProofOutput, error) {
 	latestBeefyBlockNumber, latestBeefyBlockHash, err := li.fetchLatestBeefyBlock(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fetch latest beefy block: %w", err)
+		return nil, fmt.Errorf("Fetching latest beefy block: %w", err)
 	}
 
 	log.WithFields(log.Fields{
-		"beefyBlock": latestBeefyBlockNumber,
-		"leafIndex":  input.RelayBlockNumber,
+		"beefyBlockNumber": latestBeefyBlockNumber,
+		"leafIndex":        input.SolochainBlockNumber,
 	}).Info("Generating MMR proof")
 
-	// Generate the MMR proof for the polkadot block.
-	mmrProof, err := li.relaychainConn.GenerateProofForBlock(
-		input.RelayBlockNumber+1,
+	// Generate the MMR proof for the solochain block.
+	mmrProof, err := li.solochainConn.GenerateProofForBlock(
+		input.SolochainBlockNumber+1,
 		latestBeefyBlockHash,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("generate MMR leaf proof: %w", err)
+		return nil, fmt.Errorf("Generating MMR leaf proof: %w", err)
 	}
 
 	simplifiedProof, err := merkle.ConvertToSimplifiedMMRProof(
@@ -256,87 +233,64 @@ func (li *BeefyListener) generateProof(ctx context.Context, input *ProofInput, h
 		mmrProof.Proof.Items,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("simplify MMR leaf proof: %w", err)
+		return nil, fmt.Errorf("Simplifying MMR leaf proof: %w", err)
 	}
 
-	mmrRootHash, err := li.relaychainConn.GetMMRRootHash(latestBeefyBlockHash)
+	mmrRootHash, err := li.solochainConn.GetMMRRootHash(latestBeefyBlockHash)
 	if err != nil {
-		return nil, fmt.Errorf("retrieve MMR root hash at block %v: %w", latestBeefyBlockHash.Hex(), err)
+		return nil, fmt.Errorf("Retrieving MMR root hash at block %v: %w", latestBeefyBlockHash.Hex(), err)
 	}
 
 	var merkleProofData *MerkleProofData
-	merkleProofData, input.ParaHeads, err = li.generateAndValidateParasHeadsMerkleProof(input, &mmrProof)
+	merkleProofData, input.Messages, err = li.generateAndValidateMessagesMerkleProof(input, &mmrProof)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Generating and validating message commitments merkle proof: %w", err)
 	}
 
-	log.Debug("Created all parachain merkle proof data")
+	log.Debug("Created solochain BEEFY MMR proof data")
 
 	output := ProofOutput{
 		MMRProof:        simplifiedProof,
 		MMRRootHash:     mmrRootHash,
-		Header:          *header,
+		Header:          *solochainHeaderWithCommitment,
 		MerkleProofData: *merkleProofData,
 	}
 
 	return &output, nil
 }
 
-// Generate a merkle proof for the parachain head with input ParaId and verify with merkle root hash of all parachain heads
-func (li *BeefyListener) generateAndValidateParasHeadsMerkleProof(input *ProofInput, mmrProof *types.GenerateMMRProofResponse) (*MerkleProofData, []relaychain.ParaHead, error) {
-	// Polkadot uses the following code to generate merkle root from parachain headers:
-	// https://github.com/paritytech/polkadot-sdk/blob/d66dee3c3da836bcf41a12ca4e1191faee0b6a5b/polkadot/runtime/westend/src/lib.rs#L453-L460
-	// Truncate the ParaHeads to the 1024
-	// https://github.com/paritytech/polkadot-sdk/blob/d66dee3c3da836bcf41a12ca4e1191faee0b6a5b/polkadot/runtime/parachains/src/paras/mod.rs#L1305-L1311
-	paraHeads := input.ParaHeads
-	numParas := min(MaxParaHeads, len(paraHeads))
-	merkleProofData, err := CreateParachainMerkleProof(paraHeads[:numParas], input.ParaID)
+// generateAndValidateMessagesMerkleProof generates a merkle proof for the messages in the proof input
+func (li *BeefyListener) generateAndValidateMessagesMerkleProof(input *ProofInput, mmrProof *types.GenerateMMRProofResponse) (*MerkleProofData, []OutboundQueueMessage, error) {
+	messages := input.Messages
+	merkleProofData, err := CreateMessagesMerkleProof(messages, input.MessageNonce)
 	if err != nil {
-		return nil, paraHeads, fmt.Errorf("create parachain header proof: %w", err)
+		return nil, messages, fmt.Errorf("Creating messages merkle proof: %w", err)
 	}
 
-	// Verify merkle root generated is same as value generated in relaychain and if so exit early
+	// Verify merkle root generated is same as value generated in the solochain and if so exit early
 	if merkleProofData.Root.Hex() == mmrProof.Leaf.ParachainHeads.Hex() {
-		return &merkleProofData, paraHeads, nil
+		return &merkleProofData, messages, nil
+	} else {
+		log.WithFields(log.Fields{
+			"computedMmr": merkleProofData.Root.Hex(),
+			"mmr":         mmrProof.Leaf.ParachainHeads.Hex(),
+		}).Warn("MMR parachain merkle root does not match calculated merkle root. Trying to filtering out parathreads.")
+		return nil, messages, fmt.Errorf("MMR parachain merkle root does not match calculated merkle root")
 	}
-
-	// Try a filtering out parathreads
-	log.WithFields(log.Fields{
-		"computedMmr": merkleProofData.Root.Hex(),
-		"mmr":         mmrProof.Leaf.ParachainHeads.Hex(),
-	}).Warn("MMR parachain merkle root does not match calculated merkle root. Trying to filtering out parathreads.")
-
-	paraHeads, err = li.relaychainConn.FilterParachainHeads(paraHeads, input.RelayBlockHash)
-	if err != nil {
-		return nil, paraHeads, fmt.Errorf("could not filter out parathreads: %w", err)
-	}
-
-	numParas = min(MaxParaHeads, len(paraHeads))
-	merkleProofData, err = CreateParachainMerkleProof(paraHeads[:numParas], input.ParaID)
-	if err != nil {
-		return nil, paraHeads, fmt.Errorf("create parachain header proof: %w", err)
-	}
-	if merkleProofData.Root.Hex() != mmrProof.Leaf.ParachainHeads.Hex() {
-		return nil, paraHeads, fmt.Errorf("MMR parachain merkle root does not match calculated parachain merkle root (mmr: %s, computed: %s)",
-			mmrProof.Leaf.ParachainHeads.Hex(),
-			merkleProofData.Root.String(),
-		)
-	}
-	return &merkleProofData, paraHeads, nil
 }
 
 func (li *BeefyListener) waitAndSend(ctx context.Context, task *Task, waitingPeriod uint64) error {
-	paraNonce := (*task.MessageProofs)[0].Message.Nonce
-	log.Info(fmt.Sprintf("waiting for nonce %d to be picked up by another relayer", paraNonce))
+	solochainNonce := (*task.MessageProofs)[0].Message.Nonce
+	log.Infof("Waiting for solochain message (nonce %d) to be potentially picked up by another relayer", solochainNonce)
 	var cnt uint64
 	var err error
 	for {
-		isRelayed, err := li.scanner.isNonceRelayed(ctx, uint64(paraNonce))
+		isRelayed, err := li.scanner.isNonceRelayed(ctx, uint64(solochainNonce))
 		if err != nil {
-			return err
+			return fmt.Errorf("Checking if solochain nonce %d is relayed: %w", solochainNonce, err)
 		}
 		if isRelayed {
-			log.Info(fmt.Sprintf("nonce %d picked up by another relayer, just skip", paraNonce))
+			log.Infof("Solochain message (nonce %d) picked up by another relayer, skipping", solochainNonce)
 			return nil
 		}
 		if cnt == waitingPeriod {
@@ -345,10 +299,11 @@ func (li *BeefyListener) waitAndSend(ctx context.Context, task *Task, waitingPer
 		time.Sleep(time.Duration(li.scheduleConfig.SleepInterval) * time.Second)
 		cnt++
 	}
-	log.Info(fmt.Sprintf("nonce %d is not picked up by any one, submit anyway", paraNonce))
+	log.Infof("Solochain message (nonce %d) not picked up by others, proceeding to submit", solochainNonce)
+
 	task.ProofOutput, err = li.generateProof(ctx, task.ProofInput, task.Header)
 	if err != nil {
-		return err
+		return fmt.Errorf("Generating proof for solochain message (nonce %d): %w", solochainNonce, err)
 	}
 	select {
 	case <-ctx.Done():

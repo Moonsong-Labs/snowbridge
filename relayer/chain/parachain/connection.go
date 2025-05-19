@@ -5,6 +5,7 @@ package parachain
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -129,4 +130,61 @@ func (co *Connection) GetLatestBlockNumber() (*types.BlockNumber, error) {
 	}
 
 	return &latestBlock.Block.Header.Number, nil
+}
+
+func (conn *Connection) GetMMRRootHash(blockHash types.Hash) (types.Hash, error) {
+	mmrRootHashKey, err := types.CreateStorageKey(conn.Metadata(), "Mmr", "RootHash", nil, nil)
+	if err != nil {
+		return types.Hash{}, fmt.Errorf("create storage key: %w", err)
+	}
+	var mmrRootHash types.Hash
+	ok, err := conn.API().RPC.State.GetStorage(mmrRootHashKey, &mmrRootHash, blockHash)
+	if err != nil {
+		return types.Hash{}, fmt.Errorf("query storage for mmr root hash at block %v: %w", blockHash.Hex(), err)
+	}
+	if !ok {
+		return types.Hash{}, fmt.Errorf("Mmr.RootHash storage item does not exist")
+	}
+	return mmrRootHash, nil
+}
+
+func (co *Connection) GenerateProofForBlock(
+	blockNumber uint64,
+	latestBeefyBlockHash types.Hash,
+) (types.GenerateMMRProofResponse, error) {
+	log.WithFields(log.Fields{
+		"blockNumber": blockNumber,
+		"blockHash":   latestBeefyBlockHash.Hex(),
+	}).Debug("Getting MMR Leaf for block...")
+
+	proofResponse, err := co.API().RPC.MMR.GenerateProof(uint32(blockNumber), latestBeefyBlockHash)
+	if err != nil {
+		return types.GenerateMMRProofResponse{}, err
+	}
+
+	var proofItemsHex = []string{}
+	for _, item := range proofResponse.Proof.Items {
+		proofItemsHex = append(proofItemsHex, item.Hex())
+	}
+
+	log.WithFields(log.Fields{
+		"BlockHash": proofResponse.BlockHash.Hex(),
+		"Leaf": log.Fields{
+			"ParentNumber":   proofResponse.Leaf.ParentNumberAndHash.ParentNumber,
+			"ParentHash":     proofResponse.Leaf.ParentNumberAndHash.Hash.Hex(),
+			"ParachainHeads": proofResponse.Leaf.ParachainHeads.Hex(),
+			"NextAuthoritySet": log.Fields{
+				"Id":   proofResponse.Leaf.BeefyNextAuthoritySet.ID,
+				"Len":  proofResponse.Leaf.BeefyNextAuthoritySet.Len,
+				"Root": proofResponse.Leaf.BeefyNextAuthoritySet.Root.Hex(),
+			},
+		},
+		"Proof": log.Fields{
+			"LeafIndex": proofResponse.Proof.LeafIndex,
+			"LeafCount": proofResponse.Proof.LeafCount,
+			"Items":     proofItemsHex,
+		},
+	}).Debug("Generated MMR proof")
+
+	return proofResponse, nil
 }

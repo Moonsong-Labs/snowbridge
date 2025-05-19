@@ -1,4 +1,4 @@
-package parachain
+package solochain
 
 import (
 	"bytes"
@@ -17,80 +17,78 @@ import (
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
 	"github.com/snowfork/snowbridge/relayer/chain/parachain"
-	"github.com/snowfork/snowbridge/relayer/chain/relaychain"
 	"github.com/snowfork/snowbridge/relayer/contracts"
 	"github.com/snowfork/snowbridge/relayer/ofac"
 )
 
 type Scanner struct {
-	config    *SourceConfig
-	ethConn   *ethereum.Connection
-	relayConn *relaychain.Connection
-	paraConn  *parachain.Connection
-	paraID    uint32
-	ofac      *ofac.OFAC
-	tasks     chan<- *Task
+	config   *SourceConfig
+	ethConn  *ethereum.Connection
+	soloConn *parachain.Connection
+	ofac     *ofac.OFAC
+	tasks    chan<- *Task
 }
 
-// Scans for all parachain message commitments that need to be relayed and can be
-// proven using the MMR root at the specified beefyBlockNumber of the relay chain.
-// The algorithm fetch PendingOrders storage in OutboundQueue of BH and
-// just relay each order which has not been processed on Ethereum yet.
+// Scans for all solochain message commitments that need to be relayed and can be
+// proven using the MMR root at the specified beefyBlockNumber of the solochain.
+// The algorithm fetchs the PendingOrders storage in the OutboundQueue pallet and
+// relays each order which has not been processed on Ethereum yet.
 func (s *Scanner) Scan(ctx context.Context, beefyBlockNumber uint64) ([]*Task, error) {
-	// fetch last parachain header that was finalized *before* the BEEFY block
-	beefyBlockMinusOneHash, err := s.relayConn.API().RPC.Chain.GetBlockHash(uint64(beefyBlockNumber - 1))
+	log.Infof("Scanner starting scan for messages up to solochain block %d", beefyBlockNumber)
+
+	// Fetch the last block for which we can prove its message using the MMR root at beefyBlockNumber
+	beefyBlockMinusOneHash, err := s.soloConn.API().RPC.Chain.GetBlockHash(uint64(beefyBlockNumber - 1))
 	if err != nil {
 		return nil, fmt.Errorf("fetch block hash for block %v: %w", beefyBlockNumber, err)
 	}
-	var paraHead types.Header
-	ok, err := s.relayConn.FetchParachainHead(beefyBlockMinusOneHash, s.paraID, &paraHead)
+
+	// Find all message commitments in the corresponding block which need to be relayed
+	tasks, err := s.findTasks(ctx, beefyBlockMinusOneHash)
 	if err != nil {
-		return nil, fmt.Errorf("fetch head for parachain %v at block %v: %w", s.paraID, beefyBlockMinusOneHash.Hex(), err)
-	}
-	if !ok {
-		return nil, fmt.Errorf("parachain %v is not registered", s.paraID)
+		return nil, fmt.Errorf("Finding tasks on solochain: %w", err)
 	}
 
-	paraBlockNumber := uint64(paraHead.Number)
-	paraBlockHash, err := s.paraConn.API().RPC.Chain.GetBlockHash(paraBlockNumber)
-	if err != nil {
-		return nil, fmt.Errorf("fetch parachain block hash for block %v: %w", paraBlockNumber, err)
-	}
-
-	tasks, err := s.findTasks(ctx, paraBlockHash)
-	if err != nil {
-		return nil, err
-	}
-
+	log.Infof("Scanner found %d potential tasks to process with MMR root of solochain block %d", len(tasks), beefyBlockNumber)
 	return tasks, nil
 }
 
-// findTasks finds all the message commitments which need to be relayed
+// findTasks finds all the messages which need to be relayed from the solochain at the corresponding block.
 func (s *Scanner) findTasks(
 	ctx context.Context,
-	paraHash types.Hash,
+	solochainBlockHash types.Hash,
 ) ([]*Task, error) {
-	// Fetch PendingOrders storage in parachain outbound queue
-	storageKey := types.NewStorageKey(types.CreateStorageKeyPrefix("EthereumOutboundQueueV2", "PendingOrders"))
-	keys, err := s.paraConn.API().RPC.State.GetKeys(storageKey, paraHash)
+	// Fetch PendingOrders storage in the solochain outbound queue at the corresponding block
+	storageKeyPrefix := types.NewStorageKey(types.CreateStorageKeyPrefix("EthereumOutboundQueueV2", "PendingOrders"))
+	keys, err := s.soloConn.API().RPC.State.GetKeys(storageKeyPrefix, solochainBlockHash)
 	if err != nil {
-		return nil, fmt.Errorf("fetch nonces from PendingOrders start with key '%v' and hash '%v': %w", storageKey, paraHash, err)
+		return nil, fmt.Errorf("Fetching nonces from PendingOrders at blockhash '%v': %w", solochainBlockHash, err)
 	}
+
 	var pendingOrders []PendingOrder
+
+	// Iterate over the pending order nonces
 	for _, key := range keys {
 		var pendingOrder PendingOrder
-		value, err := s.paraConn.API().RPC.State.GetStorageRaw(key, paraHash)
+
+		// Get the corresponding pending order from storage
+		value, err := s.soloConn.API().RPC.State.GetStorageRaw(key, solochainBlockHash)
 		if err != nil {
-			return nil, fmt.Errorf("fetch value of pendingOrder with key '%v' and hash '%v': %w", key, paraHash, err)
+			return nil, fmt.Errorf("Failed to fetch value for PendingOrder with nonce '%v' at blockhash '%v': %w", key, solochainBlockHash, err)
 		}
+		if value == nil || len(*value) == 0 {
+			return nil, fmt.Errorf("Empty value for PendingOrder with nonce '%v' at blockhash '%v'", key, solochainBlockHash)
+		}
+
+		// Decode the pending order
 		decoder := scale.NewDecoder(bytes.NewReader(*value))
 		err = decoder.Decode(&pendingOrder)
 		if err != nil {
-			return nil, fmt.Errorf("decode order error: %w", err)
+			return nil, fmt.Errorf("Failed to decode PendingOrder with nonce '%v' at blockhash '%v': %w", key, solochainBlockHash, err)
 		}
 		pendingOrders = append(pendingOrders, pendingOrder)
 	}
 
+	// Filter pending orders so only profitable and undelivered orders remain, and convert them to tasks
 	tasks, err := s.filterTasks(
 		ctx,
 		pendingOrders,
@@ -99,216 +97,205 @@ func (s *Scanner) findTasks(
 		return nil, err
 	}
 
+	// Gather the neccessary proof inputs for each task
 	err = s.gatherProofInputs(tasks)
 	if err != nil {
-		return nil, fmt.Errorf("gather proof input: %w", err)
+		return nil, fmt.Errorf("Gathering proof inputs for tasks: %w", err)
 	}
 
 	return tasks, nil
 }
 
-// Filter profitable and undelivered orders, convert to tasks
+// filterTasks filters profitable and undelivered orders and converts them to tasks.
 // Todo: check order is profitable or not with some price oracle
 // or some fee estimation api
 func (s *Scanner) filterTasks(
 	ctx context.Context,
 	pendingOrders []PendingOrder,
 ) ([]*Task, error) {
-
 	var tasks []*Task
 
+	// Iterate over the pending orders
 	for _, order := range pendingOrders {
-
+		// Check if the order has already been relayed
 		isRelayed, err := s.isNonceRelayed(ctx, uint64(order.Nonce))
 		if err != nil {
-			return nil, fmt.Errorf("check nonce relayed: %w", err)
+			return nil, fmt.Errorf("Checking if nonce is relayed: %w", err)
 		}
 		if isRelayed {
 			log.WithFields(log.Fields{
 				"nonce": uint64(order.Nonce),
-			}).Debug("already relayed, just skip")
+			}).Debug("Message already relayed, skipping")
 			continue
 		}
 
-		messagesKey, err := types.CreateStorageKey(s.paraConn.Metadata(), "EthereumOutboundQueueV2", "Messages", nil, nil)
-		if err != nil {
-			return nil, fmt.Errorf("create storage key: %w", err)
-		}
-
-		currentBlockNumber := uint64(order.BlockNumber)
+		// Fetch the header for the solochain block when this order was issued
+		orderBlockNumber := uint64(order.BlockNumber)
 
 		log.WithFields(log.Fields{
-			"blockNumber": currentBlockNumber,
+			"blockNumber": orderBlockNumber,
 		}).Debug("Checking header")
 
-		blockHash, err := s.paraConn.API().RPC.Chain.GetBlockHash(currentBlockNumber)
+		blockHash, err := s.soloConn.API().RPC.Chain.GetBlockHash(orderBlockNumber)
 		if err != nil {
-			return nil, fmt.Errorf("fetch block hash for block %v: %w", currentBlockNumber, err)
+			return nil, fmt.Errorf("Fetching block hash for block %v: %w", orderBlockNumber, err)
+
 		}
 
-		header, err := s.paraConn.API().RPC.Chain.GetHeader(blockHash)
+		header, err := s.soloConn.API().RPC.Chain.GetHeader(blockHash)
 		if err != nil {
-			return nil, fmt.Errorf("fetch header for block hash %v: %w", blockHash.Hex(), err)
+			return nil, fmt.Errorf("Fetching header for block hash %v: %w", blockHash.Hex(), err)
 		}
 
 		commitmentHash, err := ExtractCommitmentFromDigest(header.Digest)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Failed to extract commitment from digest for block %d (order nonce %d): %v", orderBlockNumber, order.Nonce, err)
 		}
 		if commitmentHash == nil {
+			log.Debugf("No commitment found in digest for block %d (order nonce %d), skipping", orderBlockNumber, order.Nonce)
 			continue
 		}
 
-		var messages []OutboundQueueMessage
-		raw, err := s.paraConn.API().RPC.State.GetStorageRaw(messagesKey, blockHash)
+		// Create the storage key to be able to get the messages from the EthereumOutboundQueueV2 pallet
+		messagesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "EthereumOutboundQueueV2", "Messages", nil, nil)
 		if err != nil {
-			return nil, fmt.Errorf("fetch committed messages for block %v: %w", blockHash.Hex(), err)
+			return nil, fmt.Errorf("Creating storage key for Messages of EthereumOutboundQueueV2: %w", err)
 		}
-		decoder := scale.NewDecoder(bytes.NewReader(*raw))
-		n, err := decoder.DecodeUintCompact()
+
+		// Get the messages in the corresponding block
+		var messagesInBlock []OutboundQueueMessage
+		rawMessages, err := s.soloConn.API().RPC.State.GetStorageRaw(messagesKey, blockHash)
 		if err != nil {
-			return nil, fmt.Errorf("decode message length error: %w", err)
+			return nil, fmt.Errorf("Fetching committed messages for block %v: %w", blockHash.Hex(), err)
 		}
-		for i := uint64(0); i < n.Uint64(); i++ {
+		if rawMessages == nil || len(*rawMessages) == 0 {
+			log.Debugf("No messages found in EthereumOutboundQueueV2.Messages for solochain block %v (order nonce %d), skipping", blockHash.Hex(), order.Nonce)
+			continue
+		}
+
+		// Prepare the message decoder and decode the number of messages
+		messagesDecoder := scale.NewDecoder(bytes.NewReader(*rawMessages))
+		numMessagesCompact, err := messagesDecoder.DecodeUintCompact()
+		if err != nil {
+			return nil, fmt.Errorf("Decoding message length from block '%v': %w", blockHash.Hex(), err)
+		}
+		numMessages := numMessagesCompact.Uint64()
+
+		// Iterate over all messages present in the block, decoding them and checking if they contain banned addresses
+		for i := uint64(0); i < numMessages; i++ {
 			m := OutboundQueueMessage{}
-			err = decoder.Decode(&m)
+			err = messagesDecoder.Decode(&m)
 			if err != nil {
-				return nil, fmt.Errorf("decode message error: %w", err)
+				return nil, fmt.Errorf("Decoding message at block '%v': %w", blockHash.Hex(), err)
 			}
+
+			// Check OFAC
 			isBanned, err := s.IsBanned(m)
 			if err != nil {
-				log.WithError(err).Fatal("error checking banned address found")
-				return nil, fmt.Errorf("banned check: %w", err)
+				log.WithError(err).Fatal("Error checking if address is banned")
+				return nil, fmt.Errorf("Banned check: %w", err)
 			}
 			if isBanned {
-				log.Fatal("banned address found")
-				return nil, errors.New("banned address found")
+				log.Fatal("Banned address found")
+				return nil, errors.New("Banned address found")
 			}
-			messages = append(messages, m)
+			messagesInBlock = append(messagesInBlock, m)
 		}
 
 		// For the outbound channel, the commitment hash is the merkle root of the messages
 		// https://github.com/Snowfork/snowbridge/blob/75a475cbf8fc8e13577ad6b773ac452b2bf82fbb/parachain/pallets/basic-channel/src/outbound/mod.rs#L275-L277
-		// To verify it we fetch the message proof from the parachain
-		result, err := scanForOutboundQueueProofs(
-			s.paraConn.API(),
+		// To verify it we fetch the message proof from the solochain
+		proofResult, err := scanForOutboundQueueProofs(
+			s.soloConn.API(),
 			blockHash,
 			*commitmentHash,
-			messages,
+			messagesInBlock,
 		)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Failed to scan for outbound queue proofs for block %v (order nonce %d): %v", blockHash.Hex(), order.Nonce, err)
 		}
 
-		if len(result.proofs) > 0 {
+		// If we get a proof after scanning, we can set up the corresponding task to relay the order
+		if len(proofResult.proofs) > 0 {
+
 			task := Task{
 				Header:        header,
-				MessageProofs: &result.proofs,
+				MessageProofs: &proofResult.proofs,
 				ProofInput:    nil,
-				ProofOutput:   nil,
 			}
 			tasks = append(tasks, &task)
+			log.Infof("Created task for message nonce %d from block %d", order.Nonce, orderBlockNumber)
+
+		} else {
+			log.Debugf("No proofs generated by scanForOutboundQueueProofs for solochain block %v (commitment %s), skipping order nonce %d.", blockHash.Hex(), commitmentHash.Hex(), order.Nonce)
 		}
 	}
 
 	return tasks, nil
 }
 
-type PersistedValidationData struct {
-	ParentHead             []byte
-	RelayParentNumber      uint32
-	RelayParentStorageRoot types.Hash
-	MaxPOVSize             uint32
-}
-
-// For each task, gatherProofInputs will search to find the relay chain block
-// in which that header was included as well as the parachain heads for that block.
+// gatherProofInputs will search to find the messages present in the block that corresponds
+// to the block number of the task and populate the ProofInput for each one.
 func (s *Scanner) gatherProofInputs(
 	tasks []*Task,
 ) error {
+	// Iterate over the tasks
 	for _, task := range tasks {
 
 		log.WithFields(log.Fields{
-			"ParaBlockNumber": task.Header.Number,
-		}).Debug("Gathering proof inputs for parachain header")
+			"BlockNumber": task.Header.Number,
+		}).Debug("Gathering proof inputs for block")
 
-		relayBlockNumber, err := s.findInclusionBlockNumber(uint64(task.Header.Number))
+		solochainBlockNumber := uint64(task.Header.Number)
+
+		// Fetch the block hash of the solochain block
+		solochainBlockHash, err := s.soloConn.API().RPC.Chain.GetBlockHash(solochainBlockNumber)
 		if err != nil {
-			return fmt.Errorf("find inclusion block number for parachain block %v: %w", task.Header.Number, err)
+			return fmt.Errorf("Failed to get block hash for message block %d: %v", solochainBlockNumber, err)
 		}
 
-		relayBlockHash, err := s.relayConn.API().RPC.Chain.GetBlockHash(relayBlockNumber)
+		// Create the storage key to be able to get the messages from the EthereumOutboundQueueV2 pallet
+		messagesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "EthereumOutboundQueueV2", "Messages", nil, nil)
 		if err != nil {
-			return fmt.Errorf("fetch relaychain block hash: %w", err)
+			return fmt.Errorf("Creating storage key for Messages of EthereumOutboundQueueV2: %w", err)
 		}
 
-		parachainHeads, err := s.relayConn.FetchParasHeads(relayBlockHash)
+		// Get the messages in the corresponding block
+		var messagesInBlock []OutboundQueueMessage
+		rawMessages, err := s.soloConn.API().RPC.State.GetStorageRaw(messagesKey, solochainBlockHash)
 		if err != nil {
-			return fmt.Errorf("fetch parachain heads: %w", err)
+			return fmt.Errorf("Fetching committed messages for block %v: %w", solochainBlockHash.Hex(), err)
 		}
+		if rawMessages == nil || len(*rawMessages) == 0 {
+			return fmt.Errorf("No messages found in EthereumOutboundQueueV2.Messages for solochain block %v", solochainBlockHash.Hex())
+		}
+
+		// Decode the messages
+		messagesDecoder := scale.NewDecoder(bytes.NewReader(*rawMessages))
+		err = messagesDecoder.Decode(&messagesInBlock)
+		if err != nil {
+			return fmt.Errorf("Failed to decode messages for block %v: %w", solochainBlockHash.Hex(), err)
+		}
+
+		log.WithFields(log.Fields{
+			"SolochainBlockNumber": solochainBlockNumber,
+			"SolochainBlockHash":   solochainBlockHash.Hex(),
+			"Messages":             messagesInBlock,
+		}).Debug("Gathered proof inputs for task")
 
 		task.ProofInput = &ProofInput{
-			ParaID:           s.paraID,
-			RelayBlockNumber: relayBlockNumber,
-			RelayBlockHash:   relayBlockHash,
-			ParaHeads:        parachainHeads,
+			SolochainBlockNumber: solochainBlockNumber,
+			SolochainBlockHash:   solochainBlockHash,
+			Messages:             messagesInBlock,
+			MessageNonce:         uint64((*task.MessageProofs)[0].Message.Nonce),
 		}
 	}
 
 	return nil
 }
 
-// The process for finalizing a backed parachain header times out after these many blocks:
-const FinalizationTimeout = 8
-
-// Find the relaychain block in which a parachain header was included (finalized). This usually happens
-// 2-3 blocks after the relaychain block in which the parachain header was backed.
-func (s *Scanner) findInclusionBlockNumber(
-	paraBlockNumber uint64,
-) (uint64, error) {
-	validationDataKey, err := types.CreateStorageKey(s.paraConn.Metadata(), "ParachainSystem", "ValidationData", nil, nil)
-	if err != nil {
-		return 0, fmt.Errorf("create storage key: %w", err)
-	}
-
-	paraBlockHash, err := s.paraConn.API().RPC.Chain.GetBlockHash(paraBlockNumber)
-	if err != nil {
-		return 0, fmt.Errorf("fetch parachain block hash: %w", err)
-	}
-
-	var validationData PersistedValidationData
-	ok, err := s.paraConn.API().RPC.State.GetStorage(validationDataKey, &validationData, paraBlockHash)
-	if err != nil {
-		return 0, fmt.Errorf("fetch PersistedValidationData for block %v: %w", paraBlockHash.Hex(), err)
-	}
-	if !ok {
-		return 0, fmt.Errorf("PersistedValidationData not found for block %v", paraBlockHash.Hex())
-	}
-
-	startBlock := validationData.RelayParentNumber + 1
-	for i := validationData.RelayParentNumber + 1; i < startBlock+FinalizationTimeout; i++ {
-		relayBlockHash, err := s.relayConn.API().RPC.Chain.GetBlockHash(uint64(i))
-		if err != nil {
-			return 0, fmt.Errorf("fetch relaychain block hash: %w", err)
-		}
-
-		var paraHead types.Header
-		ok, err := s.relayConn.FetchParachainHead(relayBlockHash, s.paraID, &paraHead)
-		if err != nil {
-			return 0, fmt.Errorf("fetch head for parachain %v at block %v: %w", s.paraID, relayBlockHash.Hex(), err)
-		}
-		if !ok {
-			return 0, fmt.Errorf("parachain %v is not registered", s.paraID)
-		}
-
-		if paraBlockNumber == uint64(paraHead.Number) {
-			return uint64(i), nil
-		}
-	}
-
-	return 0, fmt.Errorf("scan terminated")
-}
-
+// scanForOutboundQueueProofs will fetch the message proofs for the received messages,
+// check that the proof root matches the commitment hash and return the proofs.
 func scanForOutboundQueueProofs(
 	api *gsrpc.SubstrateAPI,
 	blockHash types.Hash,
@@ -319,23 +306,23 @@ func scanForOutboundQueueProofs(
 }, error) {
 	proofs := []MessageProof{}
 
-	for i := len(messages) - 1; i >= 0; i-- {
-		message := messages[i]
-
+	// Iterate over the messages
+	for i, message := range messages {
 		messageProof, err := fetchMessageProof(api, blockHash, uint64(i), message)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Failed to fetch message proof for index %d in block %s: %v", i, blockHash.Hex(), err)
 		}
-		// Check that the merkle root in the proof is the same as the digest hash from the header
+		// Check that the merkle root in the proof matches the commitment hash
 		if messageProof.Proof.Root != commitmentHash {
 			return nil, fmt.Errorf(
-				"Halting scan Outbound queue proof root '%v' doesn't match digest item's commitment hash '%v'",
-				messageProof.Proof.Root,
-				commitmentHash,
+				"Halting scan:Outbound queue proof root '%v' for message index %d doesn't match commitment hash '%v' in block %s",
+				messageProof.Proof.Root.Hex(),
+				i,
+				commitmentHash.Hex(),
+				blockHash.Hex(),
 			)
 		}
-
-		// Collect these commitments
+		// Collect these proofs
 		proofs = append(proofs, messageProof)
 	}
 
@@ -346,6 +333,7 @@ func scanForOutboundQueueProofs(
 	}, nil
 }
 
+// fetchMessageProof will fetch the message proof for the given message at message index from the given block hash.
 func fetchMessageProof(
 	api *gsrpc.SubstrateAPI,
 	blockHash types.Hash,
@@ -355,34 +343,38 @@ func fetchMessageProof(
 	var proofHex string
 	var proof MessageProof
 
-	params, err := types.EncodeToHexString(messageIndex)
+	// The parameter for OutboundQueueV2Api_prove_message is the message index.
+	paramsEncoded, err := types.EncodeToHexString(messageIndex)
 	if err != nil {
-		return proof, fmt.Errorf("encode params: %w", err)
+		return proof, fmt.Errorf("Encoding messageIndex param for prove_message: %w", err)
 	}
 
-	err = api.Client.Call(&proofHex, "state_call", "OutboundQueueV2Api_prove_message", params, blockHash.Hex())
+	// Call the runtime API OutboundQueueV2Api_prove_message with the message index and block hash to get the proof
+	err = api.Client.Call(&proofHex, "state_call", "OutboundQueueV2Api_prove_message", paramsEncoded, blockHash.Hex())
 	if err != nil {
-		return proof, fmt.Errorf("call RPC OutboundQueueApi_prove_message(%v, %v): %w", messageIndex, blockHash, err)
+		return proof, fmt.Errorf("RPC call to OutboundQueueV2Api_prove_message(index: %v, block: %v): %w", messageIndex, blockHash.Hex(), err)
 	}
 
+	// Decode the proof from the response
 	var optionRawMerkleProof OptionRawMerkleProof
 	err = types.DecodeFromHexString(proofHex, &optionRawMerkleProof)
 	if err != nil {
-		return proof, fmt.Errorf("decode merkle proof: %w", err)
+		return proof, fmt.Errorf("Decoding merkle proof from prove_message response: %w", err)
 	}
 
 	if !optionRawMerkleProof.HasValue {
-		return proof, fmt.Errorf("retrieve proof failed")
+		return proof, fmt.Errorf("OutboundQueueV2Api_prove_message returned no proof for index %v in block %v", messageIndex, blockHash.Hex())
 	}
 
 	merkleProof, err := NewMerkleProof(optionRawMerkleProof.Value)
 	if err != nil {
-		return proof, fmt.Errorf("decode merkle proof: %w", err)
+		return proof, fmt.Errorf("Decoding RawMerkleProof to MerkleProof: %w", err)
 	}
 
 	return MessageProof{Message: message, Proof: merkleProof}, nil
 }
 
+// isNonceRelayed checks if the given nonce has been relayed to Ethereum already
 func (s *Scanner) isNonceRelayed(ctx context.Context, nonce uint64) (bool, error) {
 	var isRelayed bool
 	gatewayAddress := common.HexToAddress(s.config.Contracts.Gateway)
@@ -400,45 +392,57 @@ func (s *Scanner) isNonceRelayed(ctx context.Context, nonce uint64) (bool, error
 	}
 	isRelayed, err = gatewayContract.V2IsDispatched(&options, nonce)
 	if err != nil {
-		return isRelayed, fmt.Errorf("check nonce from gateway contract: %w", err)
+		return isRelayed, fmt.Errorf("Checking if nonce %d is relayed to Ethereum from gateway contract: %w", nonce, err)
 	}
 	return isRelayed, nil
 }
 
+// findOrderUndelivered finds orders that were relayed (V2IsDispatched is true on Ethereum)
+// but for which a delivery receipt might not have been submitted back to the solochain.
 func (s *Scanner) findOrderUndelivered(
 	ctx context.Context,
 ) ([]*PendingOrder, error) {
-	storageKey := types.NewStorageKey(types.CreateStorageKeyPrefix("EthereumOutboundQueueV2", "PendingOrders"))
-	keys, err := s.paraConn.API().RPC.State.GetKeysLatest(storageKey)
+	// Get all pending orders at the latest block
+	storageKeyPrefix := types.NewStorageKey(types.CreateStorageKeyPrefix("EthereumOutboundQueueV2", "PendingOrders"))
+	keys, err := s.soloConn.API().RPC.State.GetKeysLatest(storageKeyPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("fetch nonces from PendingOrders start with key '%v': %w", storageKey, err)
+		return nil, fmt.Errorf("Fetching nonces from PendingOrders for undelivered check: %w", err)
 	}
+
+	// Iterate over the pending orders
 	var undeliveredOrders []*PendingOrder
 	for _, key := range keys {
 		var undeliveredOrder PendingOrder
-		value, err := s.paraConn.API().RPC.State.GetStorageRawLatest(key)
+		// Get the pending order from storage
+		value, err := s.soloConn.API().RPC.State.GetStorageRawLatest(key)
 		if err != nil {
-			return nil, fmt.Errorf("fetch value of pendingOrder with key '%v': %w", key, err)
+			return nil, fmt.Errorf("Failed to fetch value of PendingOrder with nonce '%v' for undelivered check: %v", key, err)
 		}
+
+		// Decode it
 		decoder := scale.NewDecoder(bytes.NewReader(*value))
 		err = decoder.Decode(&undeliveredOrder)
 		if err != nil {
-			return nil, fmt.Errorf("decode order error: %w", err)
+			return nil, fmt.Errorf("Failed to decode PendingOrder with nonce '%v' for undelivered check: %v", key, err)
 		}
+
+		// Check if the order has been relayed
 		isRelayed, err := s.isNonceRelayed(ctx, uint64(undeliveredOrder.Nonce))
 		if err != nil {
-			return nil, fmt.Errorf("check nonce relayed: %w", err)
+			return nil, fmt.Errorf("Error checking if nonce %d is relayed for undelivered order check: %v", undeliveredOrder.Nonce, err)
 		}
 		if isRelayed {
+			// If it's been relayed to Ethereum, it's a candidate for needing a delivery receipt on solochain.
 			log.WithFields(log.Fields{
 				"nonce": uint64(undeliveredOrder.Nonce),
-			}).Debug("Relayed but not delivered to BH")
+			}).Debug("Order nonce is relayed on Ethereum, needs delivery receipt on solochain.")
 			undeliveredOrders = append(undeliveredOrders, &undeliveredOrder)
 		}
 	}
 	return undeliveredOrders, nil
 }
 
+// isBanned checks if the message contains any banned addresses
 func (s *Scanner) IsBanned(m OutboundQueueMessage) (bool, error) {
 	destinations, err := GetDestinations(m)
 	if err != nil {
@@ -454,6 +458,7 @@ func (s *Scanner) IsBanned(m OutboundQueueMessage) (bool, error) {
 	return false, nil
 }
 
+// GetDestinations extracts the destination addresses from the message commands
 func GetDestinations(message OutboundQueueMessage) ([]string, error) {
 	var destinations []string
 	log.WithFields(log.Fields{
@@ -470,37 +475,26 @@ func GetDestinations(message OutboundQueueMessage) ([]string, error) {
 		case 2:
 			log.Debug("Unlock native token")
 
-			uintTy, _ := abi.NewType("uint256", "", nil)
-			transferTokenArgument := abi.Arguments{
-				{Type: addressTy},
-				{Type: addressTy},
-				{Type: uintTy},
-			}
-			decodedTransferToken, err := transferTokenArgument.Unpack(command.Params)
+			transferTokenArguments := abi.Arguments{{Type: addressTy}, {Type: addressTy}, {Type: uint256Ty}}
+			decodedTransferToken, err := transferTokenArguments.Unpack(command.Params)
 			if err != nil {
-				return destinations, err
+				return destinations, fmt.Errorf("OFAC: unpack UnlockNative params: %w", err)
 			}
 			if len(decodedTransferToken) < 3 {
-				return destinations, errors.New("decode transfer token command")
+				return destinations, errors.New("OFAC: not enough params for UnlockNative to find recipient")
 			}
-
 			addressValue := decodedTransferToken[1].(common.Address)
 			address = addressValue.String()
 		case 4:
 			log.Debug("Found MintForeignToken message")
 
-			arguments := abi.Arguments{
-				{Type: bytes32Ty},
-				{Type: addressTy},
-				{Type: uint256Ty},
-			}
-
+			arguments := abi.Arguments{{Type: bytes32Ty}, {Type: addressTy}, {Type: uint256Ty}}
 			decodedMessage, err := arguments.Unpack(command.Params)
 			if err != nil {
-				return destinations, fmt.Errorf("unpack tuple: %w", err)
+				return destinations, fmt.Errorf("OFAC: unpack MintForeignToken params: %w", err)
 			}
 			if len(decodedMessage) < 3 {
-				return destinations, fmt.Errorf("decoded message not found")
+				return destinations, fmt.Errorf("OFAC: not enough params for MintForeignToken to find recipient")
 			}
 
 			addressValue := decodedMessage[1].(common.Address)

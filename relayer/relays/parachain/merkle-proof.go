@@ -1,4 +1,4 @@
-package parachain
+package solochain
 
 import (
 	"encoding/hex"
@@ -7,16 +7,15 @@ import (
 	"sort"
 
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
-	"github.com/snowfork/snowbridge/relayer/chain/relaychain"
 	"github.com/snowfork/snowbridge/relayer/crypto/merkle"
 )
 
 // ByLeafIndex implements sort.Interface based on the LeafIndex field.
-type ByParaID []relaychain.ParaHead
+type ByOutboundMessage []OutboundQueueMessage
 
-func (b ByParaID) Len() int           { return len(b) }
-func (b ByParaID) Less(i, j int) bool { return b[i].ParaID < b[j].ParaID }
-func (b ByParaID) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
+func (b ByOutboundMessage) Len() int           { return len(b) }
+func (b ByOutboundMessage) Less(i, j int) bool { return b[i].Nonce < b[j].Nonce }
+func (b ByOutboundMessage) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
 
 type MerkleProofData struct {
 	PreLeaves       PreLeaves `json:"preLeaves"`
@@ -69,29 +68,29 @@ func (d MerkleProofData) String() string {
 	return string(b)
 }
 
-func CreateParachainMerkleProof(heads []relaychain.ParaHead, paraID uint32) (MerkleProofData, error) {
-	// sort slice by para ID
-	sort.Sort(ByParaID(heads))
+func CreateMessagesMerkleProof(messages []OutboundQueueMessage, messageNonce uint64) (MerkleProofData, error) {
+	// Sort slice by message nonce
+	sort.Sort(ByOutboundMessage(messages))
 
-	// loop headers, convert to pre leaves and find header being proven
-	preLeaves := make([][]byte, 0, len(heads))
-	var headerToProve []byte
-	var headerIndex int64
-	for i, head := range heads {
-		preLeaf, err := types.EncodeToBytes(head)
+	// Loop messages, convert to pre leaves and find message being proven
+	preLeaves := make([][]byte, 0, len(messages))
+	var messageToProve []byte
+	var messageIndex int64
+	for i, message := range messages {
+		preLeaf, err := types.EncodeToBytes(message)
 		if err != nil {
 			return MerkleProofData{}, err
 		}
 		preLeaves = append(preLeaves, preLeaf)
-		if head.ParaID == paraID {
-			headerToProve = preLeaf
-			headerIndex = int64(i)
+		if uint64(message.Nonce) == messageNonce {
+			messageToProve = preLeaf
+			messageIndex = int64(i)
 		}
 	}
 
 	// Reference implementation of MerkleTree in substrate
 	// https://github.com/paritytech/substrate/blob/ea387c634715793f806286abf1e64cabf9b7026f/frame/beefy-mmr/primitives/src/lib.rs#L45-L54
-	leaf, root, proof, err := merkle.GenerateMerkleProof(preLeaves, headerIndex)
+	leaf, root, proof, err := merkle.GenerateMerkleProof(preLeaves, messageIndex)
 	if err != nil {
 		return MerkleProofData{}, fmt.Errorf("create parachain merkle proof: %w", err)
 	}
@@ -99,9 +98,9 @@ func CreateParachainMerkleProof(heads []relaychain.ParaHead, paraID uint32) (Mer
 	return MerkleProofData{
 		PreLeaves:       preLeaves,
 		NumberOfLeaves:  len(preLeaves),
-		ProvenPreLeaf:   headerToProve,
+		ProvenPreLeaf:   messageToProve,
 		ProvenLeaf:      leaf,
-		ProvenLeafIndex: headerIndex,
+		ProvenLeafIndex: messageIndex,
 		Root:            root,
 		Proof:           proof,
 	}, nil
