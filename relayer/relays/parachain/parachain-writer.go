@@ -204,7 +204,7 @@ func (relay *Relay) doSubmitDeliveryProof(ctx context.Context, ev *contracts.Gat
 		return fmt.Errorf("Writing delivery receipt to solochain: %w", err)
 	}
 
-	logger.Info("V2 delivery receipt for message (nonce %d) submitted successfully to solochain.", ev.Nonce)
+	logger.WithFields(log.Fields{"nonce": ev.Nonce}).Info("V2 delivery receipt for message submitted successfully to solochain.")
 
 	return nil
 }
