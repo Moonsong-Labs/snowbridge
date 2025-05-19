@@ -72,7 +72,7 @@ contract GatewayV2Test is Test {
 
     bytes32[] public proof =
         [bytes32(0x2f9ee6cfdf244060dc28aa46347c5219e303fc95062dd672b4e406ca5c29764b)];
-    bytes public parachainHeaderProof = bytes("validProof");
+    bytes public beefyExtraFieldProof = bytes("validProof");
 
     MockGateway public gatewayLogic;
     GatewayProxy public gateway;

@@ -274,8 +274,8 @@ func (li *BeefyListener) generateAndValidateMessagesMerkleProof(input *ProofInpu
 		log.WithFields(log.Fields{
 			"computedMmr": merkleProofData.Root.Hex(),
 			"mmr":         mmrProof.Leaf.ParachainHeads.Hex(),
-		}).Warn("MMR parachain merkle root does not match calculated merkle root. Trying to filtering out parathreads.")
-		return nil, messages, fmt.Errorf("MMR parachain merkle root does not match calculated merkle root")
+		}).Warn("MMR message commitments merkle root does not match calculated merkle root.")
+		return nil, messages, fmt.Errorf("MMR message commitments merkle root does not match calculated merkle root")
 	}
 }
 

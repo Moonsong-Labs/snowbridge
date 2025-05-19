@@ -118,8 +118,8 @@ contract BeefyClient {
         uint32 nextAuthoritySetLen;
         // Merkle root of all public keys in that validator set
         bytes32 nextAuthoritySetRoot;
-        // Merkle root of all parachain headers in this block
-        bytes32 parachainHeadsRoot;
+        // Merkle root of all message commitments in this block
+        bytes32 beefyExtraField;
     }
 
     /**
@@ -595,7 +595,7 @@ contract BeefyClient {
             ScaleCodec.encodeU64(leaf.nextAuthoritySetID),
             ScaleCodec.encodeU32(leaf.nextAuthoritySetLen),
             leaf.nextAuthoritySetRoot,
-            leaf.parachainHeadsRoot
+            leaf.beefyExtraField
         );
     }
 
