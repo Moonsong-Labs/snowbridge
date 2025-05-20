@@ -269,7 +269,7 @@ func (li *BeefyListener) generateAndValidateMessagesMerkleProof(input *ProofInpu
 	log.Infof("Mmr proof leaf beefy next authority set ID: %v", mmrProof.Leaf.BeefyNextAuthoritySet.ID)
 	log.Infof("Mmr proof leaf beefy next authority set Len: %v", mmrProof.Leaf.BeefyNextAuthoritySet.Len)
 	log.Infof("Mmr proof leaf beefy next authority set Root: %v", mmrProof.Leaf.BeefyNextAuthoritySet.Root.Hex())
-	log.Infof("Mmr proof leaf parachain heads (extra field): %v", mmrProof.Leaf.ParachainHeads.Hex())
+	log.Infof("Mmr proof leaf parachain heads (extra field): %v", mmrProof.Leaf.BeefyExtraField.Hex())
 	log.Infof("Mmr proof leaf index: %v", mmrProof.Proof.LeafIndex)
 	log.Infof("Mmr proof leaf count: %v", mmrProof.Proof.LeafCount)
 	proofItemsHex := make([]string, len(mmrProof.Proof.Items))
@@ -303,14 +303,14 @@ func (li *BeefyListener) generateAndValidateMessagesMerkleProof(input *ProofInpu
 	log.Infof("Merkle proof generated data: %v", merkleProofData)
 
 	// Verify merkle root generated is same as value generated in the solochain and if so exit early
-	if merkleProofData.Root.Hex() == mmrProof.Leaf.ParachainHeads.Hex() {
+	if merkleProofData.Root.Hex() == mmrProof.Leaf.BeefyExtraField.Hex() {
 		return &merkleProofData, messages, nil
 	} else {
 		log.WithFields(log.Fields{
-			"computedMmr": merkleProofData.Root.Hex(),
-			"mmr":         mmrProof.Leaf.ParachainHeads.Hex(),
-		}).Warn("MMR message commitments merkle root does not match calculated merkle root.")
-		return nil, messages, fmt.Errorf("MMR message commitments merkle root does not match calculated merkle root")
+			"computedRoot": merkleProofData.Root.Hex(),
+			"actualRoot":   mmrProof.Leaf.BeefyExtraField.Hex(),
+		}).Warn("Message commitments merkle root does not match calculated merkle root.")
+		return nil, messages, fmt.Errorf("Message commitments merkle root does not match calculated merkle root")
 	}
 }
 
