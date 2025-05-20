@@ -35,6 +35,7 @@ type Header struct {
 	syncer             *syncer.Syncer
 	protocol           *protocol.Protocol
 	updateSlotInterval uint64
+	log                *log.Entry
 }
 
 func New(writer parachain.ChainWriter, client api.BeaconAPI, setting config.SpecSettings, store store.BeaconStore, protocol *protocol.Protocol, updateSlotInterval uint64) Header {
@@ -44,6 +45,7 @@ func New(writer parachain.ChainWriter, client api.BeaconAPI, setting config.Spec
 		syncer:             syncer.New(client, store, protocol),
 		protocol:           protocol,
 		updateSlotInterval: updateSlotInterval,
+		log:                log.WithField("relay", "beacon_header"),
 	}
 }
 
@@ -443,28 +445,39 @@ func (h *Header) getHeaderUpdateBySlot(slot uint64) (scale.HeaderUpdatePayload, 
 }
 
 func (h *Header) FetchExecutionProof(blockRoot common.Hash, instantVerification bool) (scale.ProofPayload, error) {
+	h.log.Infof("FetchExecutionProof started. blockRoot: %v, instantVerification: %v", blockRoot, instantVerification)
+
 	header, err := h.syncer.Client.GetHeaderByBlockRoot(blockRoot)
 	if err != nil {
+		h.log.Errorf("FetchExecutionProof: failed to get beacon header by blockRoot. blockRoot: %v, error: %v", blockRoot, err)
 		return scale.ProofPayload{}, fmt.Errorf("get beacon header by blockRoot: %w", err)
 	}
+	h.log.Infof("FetchExecutionProof: successfully fetched beacon header. blockRoot: %v, header: %+v", blockRoot, header)
+
 	lastFinalizedHeaderState, err := h.writer.GetLastFinalizedHeaderState()
 	if err != nil {
+		h.log.Errorf("FetchExecutionProof: failed to fetch last finalized header state. error: %v", err)
 		return scale.ProofPayload{}, fmt.Errorf("fetch last finalized header state: %w", err)
 	}
+	h.log.Infof("FetchExecutionProof: successfully fetched last finalized header state. lastFinalizedHeaderState: %+v", lastFinalizedHeaderState)
 
 	// The latest finalized header on-chain is older than the header containing the message, so we need to sync the
 	// finalized header with the message.
 	finalizedHeader, err := h.syncer.GetFinalizedHeader()
 	if err != nil {
+		h.log.Errorf("FetchExecutionProof: failed to get finalized header. error: %v", err)
 		return scale.ProofPayload{}, err
 	}
+	h.log.Infof("FetchExecutionProof: successfully fetched finalized header. finalizedHeader: %+v", finalizedHeader)
 
 	// If the header is not finalized yet, we can't do anything further.
 	if header.Slot > uint64(finalizedHeader.Slot) {
+		h.log.Warnf("FetchExecutionProof: chain not finalized yet. headerSlot: %d, finalizedHeaderSlot: %d", header.Slot, finalizedHeader.Slot)
 		return scale.ProofPayload{}, fmt.Errorf("chain not finalized yet: %w", ErrBeaconHeaderNotFinalized)
 	}
 
 	if header.Slot > lastFinalizedHeaderState.BeaconSlot && !instantVerification {
+		h.log.Warnf("FetchExecutionProof: on-chain header not recent enough and instantVerification is off. headerSlot: %d, lastFinalizedHeaderStateSlot: %d, instantVerification: %v", header.Slot, lastFinalizedHeaderState.BeaconSlot, instantVerification)
 		return scale.ProofPayload{}, fmt.Errorf("on-chain header not recent enough and instantVerification is off: %w", ErrBeaconHeaderNotFinalized)
 	}
 
@@ -472,8 +485,10 @@ func (h *Header) FetchExecutionProof(blockRoot common.Hash, instantVerification 
 	if header.Slot <= lastFinalizedHeaderState.BeaconSlot {
 		headerUpdate, err := h.getHeaderUpdateBySlot(header.Slot)
 		if err != nil {
+			h.log.Errorf("FetchExecutionProof: failed to get header update by slot with ancestry proof. headerSlot: %d, error: %v", header.Slot, err)
 			return scale.ProofPayload{}, fmt.Errorf("get header update by slot with ancestry proof: %w", err)
 		}
+		h.log.Infof("FetchExecutionProof: successfully got header update by slot. headerUpdate: %+v", headerUpdate)
 
 		return scale.ProofPayload{
 			HeaderPayload:    headerUpdate,
@@ -507,7 +522,6 @@ func (h *Header) FetchExecutionProof(blockRoot common.Hash, instantVerification 
 		HeaderPayload:    headerUpdate,
 		FinalizedPayload: &finalizedUpdate,
 	}, nil
-
 }
 
 func (h *Header) CheckHeaderFinalized(blockRoot common.Hash, instantVerification bool) error {

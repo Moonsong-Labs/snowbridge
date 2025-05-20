@@ -190,8 +190,15 @@ func (relay *Relay) doSubmitDeliveryProof(ctx context.Context, ev *contracts.Gat
 	}
 
 	// Fetch the beacon proof of the event block
+	logger.Infof("Attempting to fetch execution proof. parentBeaconRoot: %v", blockHeader.ParentBeaconRoot)
 	beaconProof, err := relay.beaconHeader.FetchExecutionProof(*blockHeader.ParentBeaconRoot, false)
-	if errors.Is(err, header.ErrBeaconHeaderNotFinalized) || beaconProof.HeaderPayload.ExecutionBranch == nil {
+	logger.Infof("Fetched execution proof. beaconProof: %+v, error: %v", beaconProof, err)
+
+	isNotFinalizedError := errors.Is(err, header.ErrBeaconHeaderNotFinalized)
+	isExecutionBranchNil := beaconProof.HeaderPayload.ExecutionBranch == nil
+	logger.Infof("Checking finalization conditions. isNotFinalizedError: %v, isExecutionBranchNil: %v", isNotFinalizedError, isExecutionBranchNil)
+
+	if isNotFinalizedError || isExecutionBranchNil {
 		logger.Infof("Ethereum event block %d is not yet finalized on Beacon chain for delivery proof. Will retry later.", ev.Raw.BlockNumber)
 		return nil
 	}
@@ -218,7 +225,7 @@ func (relay *Relay) writeToSolochain(ctx context.Context, proof scale.ProofPaylo
 		"Proof":    inboundMsg.Proof,
 	}).Debug("Generated message from Ethereum log")
 
-	err := relay.solochainWriter.WriteToParachainAndWatch(ctx, "EthereumOutboundQueueV2.submit_delivery_receipt", inboundMsg)
+	err := relay.solochainWriter.WriteToParachainAndWatch(ctx, "OutboundQueueV2.submit_delivery_receipt", inboundMsg)
 	if err != nil {
 		return fmt.Errorf("Submitting delivery receipt to solochain outbound queue v2: %w", err)
 	}

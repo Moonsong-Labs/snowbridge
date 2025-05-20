@@ -42,6 +42,8 @@ func (s *Scanner) Scan(ctx context.Context, beefyBlockNumber uint64) ([]*Task, e
 		return nil, fmt.Errorf("fetch block hash for block %v: %w", beefyBlockNumber, err)
 	}
 
+	log.Infof("Scanner fetched block hash for block %d: %s", beefyBlockNumber-1, beefyBlockMinusOneHash.Hex())
+
 	// Find all message commitments in the corresponding block which need to be relayed
 	tasks, err := s.findTasks(ctx, beefyBlockMinusOneHash)
 	if err != nil {
@@ -57,12 +59,15 @@ func (s *Scanner) findTasks(
 	ctx context.Context,
 	solochainBlockHash types.Hash,
 ) ([]*Task, error) {
+	log.Infof("findTasks: Fetching nonces from PendingOrders at blockhash '%v'", solochainBlockHash.Hex())
 	// Fetch PendingOrders storage in the solochain outbound queue at the corresponding block
-	storageKeyPrefix := types.NewStorageKey(types.CreateStorageKeyPrefix("EthereumOutboundQueueV2", "PendingOrders"))
+	storageKeyPrefix := types.NewStorageKey(types.CreateStorageKeyPrefix("OutboundQueueV2", "PendingOrders"))
+	log.Infof("findTasks: Creating storage key prefix for PendingOrders: '%v'", storageKeyPrefix.Hex())
 	keys, err := s.soloConn.API().RPC.State.GetKeys(storageKeyPrefix, solochainBlockHash)
 	if err != nil {
-		return nil, fmt.Errorf("Fetching nonces from PendingOrders at blockhash '%v': %w", solochainBlockHash, err)
+		return nil, fmt.Errorf("Fetching nonces from PendingOrders at blockhash '%v': %w", solochainBlockHash.Hex(), err)
 	}
+	log.Infof("findTasks: Found %d keys for PendingOrders at blockhash '%v'", len(keys), solochainBlockHash.Hex())
 
 	var pendingOrders []PendingOrder
 
@@ -71,17 +76,22 @@ func (s *Scanner) findTasks(
 		var pendingOrder PendingOrder
 
 		// Get the corresponding pending order from storage
+		log.Infof("findTasks: Fetching value for PendingOrder with nonce '%v' at blockhash '%v'", key.Hex(), solochainBlockHash.Hex())
 		value, err := s.soloConn.API().RPC.State.GetStorageRaw(key, solochainBlockHash)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to fetch value for PendingOrder with nonce '%v' at blockhash '%v': %w", key, solochainBlockHash, err)
+			return nil, fmt.Errorf("Failed to fetch value for PendingOrder with nonce '%v' at blockhash '%v': %w", key.Hex(), solochainBlockHash.Hex(), err)
 		}
 		if value == nil || len(*value) == 0 {
-			return nil, fmt.Errorf("Empty value for PendingOrder with nonce '%v' at blockhash '%v'", key, solochainBlockHash)
+			log.Infof("findTasks: Empty value for PendingOrder with nonce '%v' at blockhash '%v'", key.Hex(), solochainBlockHash.Hex())
+			return nil, fmt.Errorf("Empty value for PendingOrder with nonce '%v' at blockhash '%v'", key.Hex(), solochainBlockHash.Hex())
 		}
+
+		log.Infof("findTasks: Found value '%v' for PendingOrder with nonce '%v' at blockhash '%v'", value, key.Hex(), solochainBlockHash.Hex())
 
 		// Decode the pending order
 		decoder := scale.NewDecoder(bytes.NewReader(*value))
 		err = decoder.Decode(&pendingOrder)
+		log.Infof("findTasks: Decoded PendingOrder '%v' with nonce '%v' at blockhash '%v'", pendingOrder, key, solochainBlockHash)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to decode PendingOrder with nonce '%v' at blockhash '%v': %w", key, solochainBlockHash, err)
 		}
@@ -167,11 +177,11 @@ func (s *Scanner) filterTasks(
 		}
 		log.Infof("filterTasks: Extracted commitment hash %s for block %d (order Nonce %d)", commitmentHash.Hex(), orderBlockNumber, order.Nonce)
 
-		// Create the storage key to be able to get the messages from the EthereumOutboundQueueV2 pallet
-		messagesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "EthereumOutboundQueueV2", "Messages", nil, nil)
+		// Create the storage key to be able to get the messages from the OutboundQueueV2 pallet
+		messagesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "OutboundQueueV2", "Messages", nil, nil)
 		if err != nil {
 			log.Errorf("filterTasks: Error creating storage key for Messages (order Nonce %d): %v", order.Nonce, err)
-			return nil, fmt.Errorf("Creating storage key for Messages of EthereumOutboundQueueV2: %w", err)
+			return nil, fmt.Errorf("Creating storage key for Messages of OutboundQueueV2: %w", err)
 		}
 		log.Infof("filterTasks: Created Messages storage key %s for order Nonce %d", messagesKey.Hex(), order.Nonce)
 
@@ -183,8 +193,8 @@ func (s *Scanner) filterTasks(
 			return nil, fmt.Errorf("Fetching committed messages for block %v: %w", blockHash.Hex(), err)
 		}
 		if rawMessages == nil || len(*rawMessages) == 0 {
-			log.Infof("filterTasks: No messages found in EthereumOutboundQueueV2.Messages for solochain block %s (order Nonce %d), skipping order", blockHash.Hex(), order.Nonce)
-			// log.Debugf("No messages found in EthereumOutboundQueueV2.Messages for solochain block %v (order nonce %d), skipping", blockHash.Hex(), order.Nonce)
+			log.Infof("filterTasks: No messages found in OutboundQueueV2.Messages for solochain block %s (order Nonce %d), skipping order", blockHash.Hex(), order.Nonce)
+			// log.Debugf("No messages found in OutboundQueueV2.Messages for solochain block %v (order nonce %d), skipping", blockHash.Hex(), order.Nonce)
 			continue
 		}
 		log.Infof("filterTasks: Fetched %d bytes of raw messages for block %s (order Nonce %d)", len(*rawMessages), blockHash.Hex(), order.Nonce)
@@ -283,10 +293,10 @@ func (s *Scanner) gatherProofInputs(
 			return fmt.Errorf("Failed to get block hash for message block %d: %v", solochainBlockNumber, err)
 		}
 
-		// Create the storage key to be able to get the messages from the EthereumOutboundQueueV2 pallet
-		messagesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "EthereumOutboundQueueV2", "Messages", nil, nil)
+		// Create the storage key to be able to get the messages from the OutboundQueueV2 pallet
+		messagesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "OutboundQueueV2", "Messages", nil, nil)
 		if err != nil {
-			return fmt.Errorf("Creating storage key for Messages of EthereumOutboundQueueV2: %w", err)
+			return fmt.Errorf("Creating storage key for Messages of OutboundQueueV2: %w", err)
 		}
 
 		// Get the messages in the corresponding block
@@ -296,7 +306,7 @@ func (s *Scanner) gatherProofInputs(
 			return fmt.Errorf("Fetching committed messages for block %v: %w", solochainBlockHash.Hex(), err)
 		}
 		if rawMessages == nil || len(*rawMessages) == 0 {
-			return fmt.Errorf("No messages found in EthereumOutboundQueueV2.Messages for solochain block %v", solochainBlockHash.Hex())
+			return fmt.Errorf("No messages found in OutboundQueueV2.Messages for solochain block %v", solochainBlockHash.Hex())
 		}
 
 		// Decode the messages
@@ -432,7 +442,7 @@ func (s *Scanner) findOrderUndelivered(
 	ctx context.Context,
 ) ([]*PendingOrder, error) {
 	// Get all pending orders at the latest block
-	storageKeyPrefix := types.NewStorageKey(types.CreateStorageKeyPrefix("EthereumOutboundQueueV2", "PendingOrders"))
+	storageKeyPrefix := types.NewStorageKey(types.CreateStorageKeyPrefix("OutboundQueueV2", "PendingOrders"))
 	keys, err := s.soloConn.API().RPC.State.GetKeysLatest(storageKeyPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("Fetching nonces from PendingOrders for undelivered check: %w", err)

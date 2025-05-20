@@ -261,11 +261,46 @@ func (li *BeefyListener) generateProof(ctx context.Context, input *ProofInput, s
 
 // generateAndValidateMessagesMerkleProof generates a merkle proof for the messages in the proof input
 func (li *BeefyListener) generateAndValidateMessagesMerkleProof(input *ProofInput, mmrProof *types.GenerateMMRProofResponse) (*MerkleProofData, []OutboundQueueMessage, error) {
+	log.Infof("Generating and validating messages merkle proof for block %d", input.SolochainBlockNumber)
+	log.Infof("Mmr proof blockhash: %v", mmrProof.BlockHash.Hex())
+	log.Infof("Mmr proof leaf version: %v", mmrProof.Leaf.Version)
+	log.Infof("Mmr proof leaf parent number: %v", mmrProof.Leaf.ParentNumberAndHash.ParentNumber)
+	log.Infof("Mmr proof leaf parent hash: %v", mmrProof.Leaf.ParentNumberAndHash.Hash.Hex())
+	log.Infof("Mmr proof leaf beefy next authority set ID: %v", mmrProof.Leaf.BeefyNextAuthoritySet.ID)
+	log.Infof("Mmr proof leaf beefy next authority set Len: %v", mmrProof.Leaf.BeefyNextAuthoritySet.Len)
+	log.Infof("Mmr proof leaf beefy next authority set Root: %v", mmrProof.Leaf.BeefyNextAuthoritySet.Root.Hex())
+	log.Infof("Mmr proof leaf parachain heads (extra field): %v", mmrProof.Leaf.ParachainHeads.Hex())
+	log.Infof("Mmr proof leaf index: %v", mmrProof.Proof.LeafIndex)
+	log.Infof("Mmr proof leaf count: %v", mmrProof.Proof.LeafCount)
+	proofItemsHex := make([]string, len(mmrProof.Proof.Items))
+	for i, item := range mmrProof.Proof.Items {
+		proofItemsHex[i] = item.Hex()
+	}
+	log.Infof("Mmr proof proof items: %v", proofItemsHex)
+
+	log.Infof("Proof input solochain block number: %v", input.SolochainBlockNumber)
+	log.Infof("Proof input solochain block hash: %v", input.SolochainBlockHash.Hex())
+	log.Infof("Proof input message nonce: %v", input.MessageNonce)
+	proofInputHex := make([]string, len(input.Messages))
+	for i, message := range input.Messages {
+		commandsStr := ""
+		for _, command := range message.Commands {
+			commandsStr += fmt.Sprintf("Command{Kind: %d, MaxDispatchGas: %d, Params: %s}, ", command.Kind, command.MaxDispatchGas, command.Params.Hex())
+		}
+		// Remove trailing comma and space
+		if len(commandsStr) > 0 {
+			commandsStr = commandsStr[:len(commandsStr)-2]
+		}
+		proofInputHex[i] = fmt.Sprintf("Message{Origin: %s, Nonce: %d, Topic: %s, Commands: [%s]}", message.Origin.Hex(), message.Nonce, message.Topic.Hex(), commandsStr)
+	}
+	log.Infof("Proof input messages: %v", proofInputHex)
+
 	messages := input.Messages
 	merkleProofData, err := CreateMessagesMerkleProof(messages, input.MessageNonce)
 	if err != nil {
 		return nil, messages, fmt.Errorf("Creating messages merkle proof: %w", err)
 	}
+	log.Infof("Merkle proof generated data: %v", merkleProofData)
 
 	// Verify merkle root generated is same as value generated in the solochain and if so exit early
 	if merkleProofData.Root.Hex() == mmrProof.Leaf.ParachainHeads.Hex() {

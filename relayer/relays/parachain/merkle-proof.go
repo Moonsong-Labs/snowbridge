@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/snowfork/go-substrate-rpc-client/v4/types"
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/snowfork/snowbridge/relayer/crypto/merkle"
 )
 
@@ -68,21 +70,131 @@ func (d MerkleProofData) String() string {
 	return string(b)
 }
 
+// --- ABI Encoding Structs and Setup ---
+
+// AbiCommandWrapper corresponds to Solidity:
+//
+//	struct CommandWrapper {
+//	    uint8 kind;
+//	    uint64 gas;
+//	    bytes payload;
+//	}
+type AbiCommandWrapper struct {
+	Kind    uint8
+	Gas     uint64
+	Payload []byte
+}
+
+// AbiOutboundMessageWrapper corresponds to Solidity:
+//
+//	struct OutboundMessageWrapper {
+//	    bytes32 origin;
+//	    uint64 nonce;
+//	    bytes32 topic;
+//	    CommandWrapper[] commands;
+//	}
+type AbiOutboundMessageWrapper struct {
+	Origin   [32]byte // types.H256 is [32]byte
+	Nonce    uint64   // types.U64 is uint64
+	Topic    [32]byte // types.H256 is [32]byte
+	Commands []AbiCommandWrapper
+}
+
+var (
+	// finalABIArguments is used to pack the AbiOutboundMessageWrapper struct.
+	// It's configured to pack a single argument of the OutboundMessageWrapper tuple type.
+	finalABIArguments abi.Arguments
+)
+
+func init() {
+	// Define ABI type for CommandWrapper: (uint8,uint64,bytes)
+	commandComponents := []abi.ArgumentMarshaling{
+		{Name: "kind", Type: "uint8"},
+		{Name: "gas", Type: "uint64"},
+		{Name: "payload", Type: "bytes"},
+	}
+
+	// Define ABI type for OutboundMessageWrapper: (bytes32,uint64,bytes32,CommandWrapper[])
+	// The "commands" field is an array of the CommandWrapper tuple.
+	// InternalType "CommandWrapper[]" is for easier debugging/reflection if needed by some tools,
+	// Type "tuple[]" with Components defines the structure for ABI encoding.
+	outboundMessageWrapperComponents := []abi.ArgumentMarshaling{
+		{Name: "origin", Type: "bytes32"},
+		{Name: "nonce", Type: "uint64"},
+		{Name: "topic", Type: "bytes32"},
+		{Name: "commands", Type: "tuple[]", Components: commandComponents, InternalType: "CommandWrapper[]"},
+	}
+
+	// Create the ABI type for the OutboundMessageWrapper struct itself
+	outboundMessageWrapperABIType, err := abi.NewType("tuple", "OutboundMessageWrapper", outboundMessageWrapperComponents)
+	if err != nil {
+		log.Fatalf("Failed to create OutboundMessageWrapper ABI type: %v", err)
+	}
+
+	// finalABIArguments will be used to pack a single argument of type OutboundMessageWrapper
+	finalABIArguments = abi.Arguments{{Type: outboundMessageWrapperABIType, Name: "message"}}
+}
+
+// --- End ABI Encoding Structs and Setup ---
+
 func CreateMessagesMerkleProof(messages []OutboundQueueMessage, messageNonce uint64) (MerkleProofData, error) {
-	// Sort slice by message nonce
+	// Sort slice by message nonce (TODO: Sort probably not needed since messages are appeneded in order)
 	sort.Sort(ByOutboundMessage(messages))
+	messagesStr := make([]string, len(messages))
+	for i, msg := range messages {
+		commandsStr := ""
+		for _, command := range msg.Commands {
+			commandsStr += fmt.Sprintf("Command{Kind: %d, MaxDispatchGas: %d, Params: %s}, ", command.Kind, command.MaxDispatchGas, command.Params.Hex())
+		}
+		// Remove trailing comma and space
+		if len(commandsStr) > 0 {
+			commandsStr = commandsStr[:len(commandsStr)-2]
+		}
+		messagesStr[i] = fmt.Sprintf("Message{Origin: %s, Nonce: %d, Topic: %s, Commands: [%s]}", msg.Origin.Hex(), msg.Nonce, msg.Topic.Hex(), commandsStr)
+	}
+	log.Infof("Sorted messages: %v", messagesStr)
+	log.Infof("Message nonce of message to prove: %d", messageNonce)
 
 	// Loop messages, convert to pre leaves and find message being proven
 	preLeaves := make([][]byte, 0, len(messages))
 	var messageToProve []byte
 	var messageIndex int64
 	for i, message := range messages {
-		preLeaf, err := types.EncodeToBytes(message)
-		if err != nil {
-			return MerkleProofData{}, err
+		commandsStr := ""
+		for _, command := range message.Commands {
+			commandsStr += fmt.Sprintf("Command{Kind: %d, MaxDispatchGas: %d, Params: %s}, ", command.Kind, command.MaxDispatchGas, command.Params.Hex())
 		}
+		// Remove trailing comma and space
+		if len(commandsStr) > 0 {
+			commandsStr = commandsStr[:len(commandsStr)-2]
+		}
+		formattedMessage := fmt.Sprintf("Message{Origin: %s, Nonce: %d, Topic: %s, Commands: [%s]}", message.Origin.Hex(), message.Nonce, message.Topic.Hex(), commandsStr)
+		log.Infof("Processing message at index %d: %s", i, formattedMessage)
+
+		abiCommands := make([]AbiCommandWrapper, len(message.Commands))
+		for j, cmd := range message.Commands {
+			abiCommands[j] = AbiCommandWrapper{
+				Kind:    uint8(cmd.Kind),
+				Gas:     uint64(cmd.MaxDispatchGas),
+				Payload: cmd.Params,
+			}
+		}
+
+		abiWrapper := AbiOutboundMessageWrapper{
+			Origin:   message.Origin,
+			Nonce:    uint64(message.Nonce),
+			Topic:    message.Topic,
+			Commands: abiCommands,
+		}
+
+		preLeaf, err := finalABIArguments.Pack(abiWrapper)
+		if err != nil {
+			return MerkleProofData{}, fmt.Errorf("failed to ABI-encode message (nonce %d, index %d): %w", message.Nonce, i, err)
+		}
+
 		preLeaves = append(preLeaves, preLeaf)
 		if uint64(message.Nonce) == messageNonce {
+			log.Infof("Message to prove found! Index: %d, Nonce: %d. ABI Encoded ProvenPreLeaf will be used.", i, message.Nonce)
 			messageToProve = preLeaf
 			messageIndex = int64(i)
 		}
@@ -94,6 +206,15 @@ func CreateMessagesMerkleProof(messages []OutboundQueueMessage, messageNonce uin
 	if err != nil {
 		return MerkleProofData{}, fmt.Errorf("create parachain merkle proof: %w", err)
 	}
+	log.Infof("Merkle proof generated!")
+	log.Infof("ProvenPreLeaf (ABI Encoded): %s", HexBytes(messageToProve).Hex())
+	log.Infof("ProvenLeaf (Hashed ABI Encoded PreLeaf): %s", HexBytes(leaf).Hex())
+	log.Infof("Root: %s", HexBytes(root).Hex())
+	proofHex := make([]string, len(proof))
+	for i, pItem := range proof {
+		proofHex[i] = HexBytes(pItem[:]).Hex()
+	}
+	log.Infof("Proof: %v", proofHex)
 
 	return MerkleProofData{
 		PreLeaves:       preLeaves,
