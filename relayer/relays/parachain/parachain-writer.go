@@ -190,13 +190,11 @@ func (relay *Relay) doSubmitDeliveryProof(ctx context.Context, ev *contracts.Gat
 	}
 
 	// Fetch the beacon proof of the event block
-	logger.Infof("Attempting to fetch execution proof. parentBeaconRoot: %v", blockHeader.ParentBeaconRoot)
 	beaconProof, err := relay.beaconHeader.FetchExecutionProof(*blockHeader.ParentBeaconRoot, false)
-	logger.Infof("Fetched execution proof. beaconProof: %+v, error: %v", beaconProof, err)
+	logger.Debugf("Fetched execution proof. beaconProof: %+v, error: %v", beaconProof, err)
 
 	isNotFinalizedError := errors.Is(err, header.ErrBeaconHeaderNotFinalized)
 	isExecutionBranchNil := beaconProof.HeaderPayload.ExecutionBranch == nil
-	logger.Infof("Checking finalization conditions. isNotFinalizedError: %v, isExecutionBranchNil: %v", isNotFinalizedError, isExecutionBranchNil)
 
 	if isNotFinalizedError || isExecutionBranchNil {
 		logger.Infof("Ethereum event block %d is not yet finalized on Beacon chain for delivery proof. Will retry later.", ev.Raw.BlockNumber)

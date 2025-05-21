@@ -21,7 +21,7 @@ type Task struct {
 	MessageProofs *[]MessageProof
 }
 
-// A ProofInput is data needed to generate a proof of a
+// A ProofInput is data needed to generate a proof of a message commitments root
 type ProofInput struct {
 	// Solochain block number
 	SolochainBlockNumber uint64

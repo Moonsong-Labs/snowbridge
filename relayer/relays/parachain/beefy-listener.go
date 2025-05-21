@@ -76,7 +76,7 @@ func (li *BeefyListener) Start(ctx context.Context, eg *errgroup.Group) error {
 			return fmt.Errorf("fetch latest beefy block: %w", err)
 		}
 
-		log.Infof("Initial scan up to solochain beefy block %d (latest verified on Ethereum)", beefyBlockNumber)
+		log.Debugf("Initial scan up to solochain beefy block %d (latest verified on Ethereum)", beefyBlockNumber)
 		err = li.doScan(ctx, beefyBlockNumber)
 		if err != nil {
 			return fmt.Errorf("Initial scan for sync tasks bounded by BEEFY block %v: %w", beefyBlockNumber, err)
@@ -261,46 +261,13 @@ func (li *BeefyListener) generateProof(ctx context.Context, input *ProofInput, s
 
 // generateAndValidateMessagesMerkleProof generates a merkle proof for the messages in the proof input
 func (li *BeefyListener) generateAndValidateMessagesMerkleProof(input *ProofInput, mmrProof *types.GenerateMMRProofResponse) (*MerkleProofData, []OutboundQueueMessage, error) {
-	log.Infof("Generating and validating messages merkle proof for block %d", input.SolochainBlockNumber)
-	log.Infof("Mmr proof blockhash: %v", mmrProof.BlockHash.Hex())
-	log.Infof("Mmr proof leaf version: %v", mmrProof.Leaf.Version)
-	log.Infof("Mmr proof leaf parent number: %v", mmrProof.Leaf.ParentNumberAndHash.ParentNumber)
-	log.Infof("Mmr proof leaf parent hash: %v", mmrProof.Leaf.ParentNumberAndHash.Hash.Hex())
-	log.Infof("Mmr proof leaf beefy next authority set ID: %v", mmrProof.Leaf.BeefyNextAuthoritySet.ID)
-	log.Infof("Mmr proof leaf beefy next authority set Len: %v", mmrProof.Leaf.BeefyNextAuthoritySet.Len)
-	log.Infof("Mmr proof leaf beefy next authority set Root: %v", mmrProof.Leaf.BeefyNextAuthoritySet.Root.Hex())
-	log.Infof("Mmr proof leaf parachain heads (extra field): %v", mmrProof.Leaf.BeefyExtraField.Hex())
-	log.Infof("Mmr proof leaf index: %v", mmrProof.Proof.LeafIndex)
-	log.Infof("Mmr proof leaf count: %v", mmrProof.Proof.LeafCount)
-	proofItemsHex := make([]string, len(mmrProof.Proof.Items))
-	for i, item := range mmrProof.Proof.Items {
-		proofItemsHex[i] = item.Hex()
-	}
-	log.Infof("Mmr proof proof items: %v", proofItemsHex)
-
-	log.Infof("Proof input solochain block number: %v", input.SolochainBlockNumber)
-	log.Infof("Proof input solochain block hash: %v", input.SolochainBlockHash.Hex())
-	log.Infof("Proof input message nonce: %v", input.MessageNonce)
-	proofInputHex := make([]string, len(input.Messages))
-	for i, message := range input.Messages {
-		commandsStr := ""
-		for _, command := range message.Commands {
-			commandsStr += fmt.Sprintf("Command{Kind: %d, MaxDispatchGas: %d, Params: %s}, ", command.Kind, command.MaxDispatchGas, command.Params.Hex())
-		}
-		// Remove trailing comma and space
-		if len(commandsStr) > 0 {
-			commandsStr = commandsStr[:len(commandsStr)-2]
-		}
-		proofInputHex[i] = fmt.Sprintf("Message{Origin: %s, Nonce: %d, Topic: %s, Commands: [%s]}", message.Origin.Hex(), message.Nonce, message.Topic.Hex(), commandsStr)
-	}
-	log.Infof("Proof input messages: %v", proofInputHex)
+	log.Debugf("Generating and validating messages merkle proof for block %d", input.SolochainBlockNumber)
 
 	messages := input.Messages
 	merkleProofData, err := CreateMessagesMerkleProof(messages, input.MessageNonce)
 	if err != nil {
 		return nil, messages, fmt.Errorf("Creating messages merkle proof: %w", err)
 	}
-	log.Infof("Merkle proof generated data: %v", merkleProofData)
 
 	// Verify merkle root generated is same as value generated in the solochain and if so exit early
 	if merkleProofData.Root.Hex() == mmrProof.Leaf.BeefyExtraField.Hex() {
@@ -316,7 +283,7 @@ func (li *BeefyListener) generateAndValidateMessagesMerkleProof(input *ProofInpu
 
 func (li *BeefyListener) waitAndSend(ctx context.Context, task *Task, waitingPeriod uint64) error {
 	solochainNonce := (*task.MessageProofs)[0].Message.Nonce
-	log.Infof("Waiting for solochain message (nonce %d) to be potentially picked up by another relayer", solochainNonce)
+	log.Debugf("Waiting for solochain message (nonce %d) to be potentially picked up by another relayer", solochainNonce)
 	var cnt uint64
 	var err error
 	for {
@@ -325,7 +292,7 @@ func (li *BeefyListener) waitAndSend(ctx context.Context, task *Task, waitingPer
 			return fmt.Errorf("Checking if solochain nonce %d is relayed: %w", solochainNonce, err)
 		}
 		if isRelayed {
-			log.Infof("Solochain message (nonce %d) picked up by another relayer, skipping", solochainNonce)
+			log.Debugf("Solochain message (nonce %d) picked up by another relayer, skipping", solochainNonce)
 			return nil
 		}
 		if cnt == waitingPeriod {
@@ -334,7 +301,7 @@ func (li *BeefyListener) waitAndSend(ctx context.Context, task *Task, waitingPer
 		time.Sleep(time.Duration(li.scheduleConfig.SleepInterval) * time.Second)
 		cnt++
 	}
-	log.Infof("Solochain message (nonce %d) not picked up by others, proceeding to submit", solochainNonce)
+	log.Debugf("Solochain message (nonce %d) not picked up by others, proceeding to submit", solochainNonce)
 
 	task.ProofOutput, err = li.generateProof(ctx, task.ProofInput, task.Header)
 	if err != nil {

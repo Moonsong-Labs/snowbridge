@@ -3,7 +3,6 @@ package solochain
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -34,15 +33,14 @@ type Scanner struct {
 // The algorithm fetchs the PendingOrders storage in the OutboundQueue pallet and
 // relays each order which has not been processed on Ethereum yet.
 func (s *Scanner) Scan(ctx context.Context, beefyBlockNumber uint64) ([]*Task, error) {
-	log.Infof("Scanner starting scan for messages up to solochain block %d", beefyBlockNumber)
+	log.Debugf("Scanner starting scan for messages up to solochain block %d", beefyBlockNumber)
 
 	// Fetch the last block for which we can prove its message using the MMR root at beefyBlockNumber
 	beefyBlockMinusOneHash, err := s.soloConn.API().RPC.Chain.GetBlockHash(uint64(beefyBlockNumber - 1))
 	if err != nil {
 		return nil, fmt.Errorf("fetch block hash for block %v: %w", beefyBlockNumber, err)
 	}
-
-	log.Infof("Scanner fetched block hash for block %d: %s", beefyBlockNumber-1, beefyBlockMinusOneHash.Hex())
+	log.Debugf("Scanner fetched block hash for block %d: %s", beefyBlockNumber-1, beefyBlockMinusOneHash.Hex())
 
 	// Find all message commitments in the corresponding block which need to be relayed
 	tasks, err := s.findTasks(ctx, beefyBlockMinusOneHash)
@@ -50,7 +48,7 @@ func (s *Scanner) Scan(ctx context.Context, beefyBlockNumber uint64) ([]*Task, e
 		return nil, fmt.Errorf("Finding tasks on solochain: %w", err)
 	}
 
-	log.Infof("Scanner found %d potential tasks to process with MMR root of solochain block %d", len(tasks), beefyBlockNumber)
+	log.Debugf("Scanner found %d potential tasks to process with MMR root of solochain block %d", len(tasks), beefyBlockNumber)
 	return tasks, nil
 }
 
@@ -59,15 +57,15 @@ func (s *Scanner) findTasks(
 	ctx context.Context,
 	solochainBlockHash types.Hash,
 ) ([]*Task, error) {
-	log.Infof("findTasks: Fetching nonces from PendingOrders at blockhash '%v'", solochainBlockHash.Hex())
+	log.Debugf("findTasks: Fetching nonces from PendingOrders at blockhash '%v'", solochainBlockHash.Hex())
+
 	// Fetch PendingOrders storage in the solochain outbound queue at the corresponding block
 	storageKeyPrefix := types.NewStorageKey(types.CreateStorageKeyPrefix("OutboundQueueV2", "PendingOrders"))
-	log.Infof("findTasks: Creating storage key prefix for PendingOrders: '%v'", storageKeyPrefix.Hex())
 	keys, err := s.soloConn.API().RPC.State.GetKeys(storageKeyPrefix, solochainBlockHash)
 	if err != nil {
 		return nil, fmt.Errorf("Fetching nonces from PendingOrders at blockhash '%v': %w", solochainBlockHash.Hex(), err)
 	}
-	log.Infof("findTasks: Found %d keys for PendingOrders at blockhash '%v'", len(keys), solochainBlockHash.Hex())
+	log.Debugf("findTasks: Found %d keys for PendingOrders at blockhash '%v'", len(keys), solochainBlockHash.Hex())
 
 	var pendingOrders []PendingOrder
 
@@ -76,22 +74,19 @@ func (s *Scanner) findTasks(
 		var pendingOrder PendingOrder
 
 		// Get the corresponding pending order from storage
-		log.Infof("findTasks: Fetching value for PendingOrder with nonce '%v' at blockhash '%v'", key.Hex(), solochainBlockHash.Hex())
 		value, err := s.soloConn.API().RPC.State.GetStorageRaw(key, solochainBlockHash)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to fetch value for PendingOrder with nonce '%v' at blockhash '%v': %w", key.Hex(), solochainBlockHash.Hex(), err)
 		}
 		if value == nil || len(*value) == 0 {
-			log.Infof("findTasks: Empty value for PendingOrder with nonce '%v' at blockhash '%v'", key.Hex(), solochainBlockHash.Hex())
 			return nil, fmt.Errorf("Empty value for PendingOrder with nonce '%v' at blockhash '%v'", key.Hex(), solochainBlockHash.Hex())
 		}
 
-		log.Infof("findTasks: Found value '%v' for PendingOrder with nonce '%v' at blockhash '%v'", value, key.Hex(), solochainBlockHash.Hex())
+		log.Debugf("findTasks: Found value '%v' for PendingOrder with key '%v' at blockhash '%v'", value, key.Hex(), solochainBlockHash.Hex())
 
 		// Decode the pending order
 		decoder := scale.NewDecoder(bytes.NewReader(*value))
 		err = decoder.Decode(&pendingOrder)
-		log.Infof("findTasks: Decoded PendingOrder '%v' with nonce '%v' at blockhash '%v'", pendingOrder, key, solochainBlockHash)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to decode PendingOrder with nonce '%v' at blockhash '%v': %w", key, solochainBlockHash, err)
 		}
@@ -123,124 +118,100 @@ func (s *Scanner) filterTasks(
 	ctx context.Context,
 	pendingOrders []PendingOrder,
 ) ([]*Task, error) {
+	log.Debugf("filterTasks: Started filtering %d pending orders", len(pendingOrders))
+
 	var tasks []*Task
-	log.Infof("filterTasks: Started filtering %d pending orders", len(pendingOrders))
 
 	// Iterate over the pending orders
 	for i, order := range pendingOrders {
-		log.Infof("filterTasks: Processing pending order %d/%d: Nonce %d, BlockNumber %d", i+1, len(pendingOrders), order.Nonce, order.BlockNumber)
+		log.Debugf("filterTasks: Processing pending order %d/%d: Nonce %d, BlockNumber %d", i+1, len(pendingOrders), order.Nonce, order.BlockNumber)
 		// Check if the order has already been relayed
 		isRelayed, err := s.isNonceRelayed(ctx, uint64(order.Nonce))
 		if err != nil {
-			log.Errorf("filterTasks: Error checking if nonce %d is relayed: %v", order.Nonce, err)
-			return nil, fmt.Errorf("Checking if nonce is relayed: %w", err)
+			return nil, fmt.Errorf("filterTasks: Error checking if nonce %d is relayed: %w", order.Nonce, err)
 		}
 		if isRelayed {
-			log.Infof("filterTasks: Nonce %d already relayed, skipping", order.Nonce)
-			// log.WithFields(log.Fields{
-			// 	"nonce": uint64(order.Nonce),
-			// }).Debug("Message already relayed, skipping")
+			log.WithFields(log.Fields{
+				"nonce": uint64(order.Nonce),
+			}).Debug("filterTasks: Nonce already relayed, skipping")
 			continue
 		}
 
 		// Fetch the header for the solochain block when this order was issued
 		orderBlockNumber := uint64(order.BlockNumber)
 
-		log.Infof("filterTasks: Fetching block hash for order (Nonce %d) at solochain block number %d", order.Nonce, orderBlockNumber)
-		// log.WithFields(log.Fields{
-		// 	"blockNumber": orderBlockNumber,
-		// }).Debug("Checking header")
+		log.Debugf("filterTasks: Fetching block hash and header for order (Nonce %d) at solochain block number %d", order.Nonce, orderBlockNumber)
 
 		blockHash, err := s.soloConn.API().RPC.Chain.GetBlockHash(orderBlockNumber)
 		if err != nil {
-			log.Errorf("filterTasks: Error fetching block hash for block %d (order Nonce %d): %v", orderBlockNumber, order.Nonce, err)
-			return nil, fmt.Errorf("Fetching block hash for block %v: %w", orderBlockNumber, err)
-
+			return nil, fmt.Errorf("filterTasks: Error fetching block hash for block %d (order Nonce %d): %w", orderBlockNumber, order.Nonce, err)
 		}
-		log.Infof("filterTasks: Fetched block hash %s for solochain block %d (order Nonce %d)", blockHash.Hex(), orderBlockNumber, order.Nonce)
 
 		header, err := s.soloConn.API().RPC.Chain.GetHeader(blockHash)
 		if err != nil {
-			log.Errorf("filterTasks: Error fetching header for block hash %s (order Nonce %d): %v", blockHash.Hex(), order.Nonce, err)
-			return nil, fmt.Errorf("Fetching header for block hash %v: %w", blockHash.Hex(), err)
+			return nil, fmt.Errorf("filterTasks: Error fetching header for block hash %s (order Nonce %d): %w", blockHash.Hex(), order.Nonce, err)
 		}
 
 		commitmentHash, err := ExtractCommitmentFromDigest(header.Digest)
 		if err != nil {
-			log.Errorf("filterTasks: Error extracting commitment from digest for block %d (order Nonce %d): %v", orderBlockNumber, order.Nonce, err)
-			return nil, fmt.Errorf("Failed to extract commitment from digest for block %d (order nonce %d): %v", orderBlockNumber, order.Nonce, err)
+			return nil, fmt.Errorf("filterTasks: Failed to extract commitment from digest for block %d (order Nonce %d): %w", orderBlockNumber, order.Nonce, err)
 		}
 		if commitmentHash == nil {
-			log.Infof("filterTasks: No commitment found in digest for block %d (order Nonce %d), skipping order", orderBlockNumber, order.Nonce)
-			// log.Debugf("No commitment found in digest for block %d (order nonce %d), skipping", orderBlockNumber, order.Nonce)
+			log.Warnf("filterTasks: No commitment found in digest for block %d (order Nonce %d), skipping order", orderBlockNumber, order.Nonce)
 			continue
 		}
-		log.Infof("filterTasks: Extracted commitment hash %s for block %d (order Nonce %d)", commitmentHash.Hex(), orderBlockNumber, order.Nonce)
+
+		log.Debugf("filterTasks: Extracted commitment hash %s for block %d (order Nonce %d). Fetching messages from OutboundQueueV2 pallet", commitmentHash.Hex(), orderBlockNumber, order.Nonce)
 
 		// Create the storage key to be able to get the messages from the OutboundQueueV2 pallet
 		messagesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "OutboundQueueV2", "Messages", nil, nil)
 		if err != nil {
-			log.Errorf("filterTasks: Error creating storage key for Messages (order Nonce %d): %v", order.Nonce, err)
-			return nil, fmt.Errorf("Creating storage key for Messages of OutboundQueueV2: %w", err)
+			return nil, fmt.Errorf("filterTasks: Error creating storage key for Messages (order Nonce %d): %w", order.Nonce, err)
 		}
-		log.Infof("filterTasks: Created Messages storage key %s for order Nonce %d", messagesKey.Hex(), order.Nonce)
 
 		// Get the messages in the corresponding block
 		var messagesInBlock []OutboundQueueMessage
 		rawMessages, err := s.soloConn.API().RPC.State.GetStorageRaw(messagesKey, blockHash)
 		if err != nil {
-			log.Errorf("filterTasks: Error fetching committed messages for block %s (order Nonce %d): %v", blockHash.Hex(), order.Nonce, err)
-			return nil, fmt.Errorf("Fetching committed messages for block %v: %w", blockHash.Hex(), err)
+			return nil, fmt.Errorf("filterTasks: Error fetching committed messages for block %s (order Nonce %d): %w", blockHash.Hex(), order.Nonce, err)
 		}
 		if rawMessages == nil || len(*rawMessages) == 0 {
-			log.Infof("filterTasks: No messages found in OutboundQueueV2.Messages for solochain block %s (order Nonce %d), skipping order", blockHash.Hex(), order.Nonce)
-			// log.Debugf("No messages found in OutboundQueueV2.Messages for solochain block %v (order nonce %d), skipping", blockHash.Hex(), order.Nonce)
+			log.Warnf("filterTasks: No messages found in OutboundQueueV2.Messages for solochain block %s (order Nonce %d), skipping order", blockHash.Hex(), order.Nonce)
 			continue
 		}
-		log.Infof("filterTasks: Fetched %d bytes of raw messages for block %s (order Nonce %d)", len(*rawMessages), blockHash.Hex(), order.Nonce)
 
 		// Prepare the message decoder and decode the number of messages
 		messagesDecoder := scale.NewDecoder(bytes.NewReader(*rawMessages))
 		numMessagesCompact, err := messagesDecoder.DecodeUintCompact()
 		if err != nil {
-			log.Errorf("filterTasks: Error decoding message length from block %s (order Nonce %d): %v", blockHash.Hex(), order.Nonce, err)
-			return nil, fmt.Errorf("Decoding message length from block '%v': %w", blockHash.Hex(), err)
+			return nil, fmt.Errorf("filterTasks: Error decoding message length from block %s (order Nonce %d): %w", blockHash.Hex(), order.Nonce, err)
 		}
 		numMessages := numMessagesCompact.Uint64()
-		log.Infof("filterTasks: Found %d messages in block %s (order Nonce %d)", numMessages, blockHash.Hex(), order.Nonce)
+		log.Debugf("filterTasks: Found %d messages in block %s (order Nonce %d)", numMessages, blockHash.Hex(), order.Nonce)
 
 		// Iterate over all messages present in the block, decoding them and checking if they contain banned addresses
 		for i := uint64(0); i < numMessages; i++ {
 			m := OutboundQueueMessage{}
-			log.Infof("filterTasks: Decoding message %d/%d in block %s (order Nonce %d)", i+1, numMessages, blockHash.Hex(), order.Nonce)
 			err = messagesDecoder.Decode(&m)
 			if err != nil {
-				log.Errorf("filterTasks: Error decoding message %d/%d in block %s (order Nonce %d): %v", i+1, numMessages, blockHash.Hex(), order.Nonce, err)
-				return nil, fmt.Errorf("Decoding message at block '%v': %w", blockHash.Hex(), err)
+				return nil, fmt.Errorf("filterTasks: Error decoding message %d/%d in block %s (order Nonce %d): %w", i+1, numMessages, blockHash.Hex(), order.Nonce, err)
 			}
-			log.Infof("filterTasks: Decoded message %d/%d: Origin %s, Nonce %d, Topic %s, Commands count %d (order Nonce %d)", i+1, numMessages, m.Origin.Hex(), m.Nonce, m.Topic.Hex(), len(m.Commands), order.Nonce)
 
 			// Check OFAC
-			log.Infof("filterTasks: Checking OFAC for message %d/%d in block %s (order Nonce %d)", i+1, numMessages, blockHash.Hex(), order.Nonce)
 			isBanned, err := s.IsBanned(m)
 			if err != nil {
-				log.Errorf("filterTasks: Error checking OFAC for message %d/%d in block %s (order Nonce %d): %v", i+1, numMessages, blockHash.Hex(), order.Nonce, err)
-				// log.WithError(err).Fatal("Error checking if address is banned") // This was Fatal, changing to Error for robustness
-				return nil, fmt.Errorf("Banned check: %w", err)
+				return nil, fmt.Errorf("filterTasks: Error checking OFAC for message %d/%d in block %s (order Nonce %d): %w", i+1, numMessages, blockHash.Hex(), order.Nonce, err)
 			}
 			if isBanned {
-				log.Warnf("filterTasks: Banned address found in message %d/%d in block %s (order Nonce %d). Message Origin %s, Nonce %d, Topic %s", i+1, numMessages, blockHash.Hex(), order.Nonce, m.Origin.Hex(), m.Nonce, m.Topic.Hex())
-				// log.Fatal("Banned address found") // This was Fatal, decision to skip or error out should be higher up.
-				return nil, errors.New("Banned address found in message, halting processing for this order set") // Or decide to skip this message and continue
+				return nil, fmt.Errorf("filterTasks: Banned address found in message %d/%d in block %s (order Nonce %d). Message Origin %s, Nonce %d, Topic %s", i+1, numMessages, blockHash.Hex(), order.Nonce, m.Origin.Hex(), m.Nonce, m.Topic.Hex())
 			}
-			log.Infof("filterTasks: OFAC check passed for message %d/%d in block %s (order Nonce %d)", i+1, numMessages, blockHash.Hex(), order.Nonce)
 			messagesInBlock = append(messagesInBlock, m)
 		}
 
 		// For the outbound channel, the commitment hash is the merkle root of the messages
 		// https://github.com/Snowfork/snowbridge/blob/75a475cbf8fc8e13577ad6b773ac452b2bf82fbb/parachain/pallets/basic-channel/src/outbound/mod.rs#L275-L277
 		// To verify it we fetch the message proof from the solochain
-		log.Infof("filterTasks: Scanning for outbound queue proofs for block %s, commitment %s (order Nonce %d)", blockHash.Hex(), commitmentHash.Hex(), order.Nonce)
+		log.Debugf("filterTasks: Scanning for outbound queue proofs for block %s, commitment %s (order Nonce %d)", blockHash.Hex(), commitmentHash.Hex(), order.Nonce)
 		proofResult, err := scanForOutboundQueueProofs(
 			s.soloConn.API(),
 			blockHash,
@@ -248,28 +219,21 @@ func (s *Scanner) filterTasks(
 			messagesInBlock,
 		)
 		if err != nil {
-			log.Errorf("filterTasks: Error scanning for outbound queue proofs for block %s (order Nonce %d): %v", blockHash.Hex(), order.Nonce, err)
-			return nil, fmt.Errorf("Failed to scan for outbound queue proofs for block %v (order nonce %d): %v", blockHash.Hex(), order.Nonce, err)
+			return nil, fmt.Errorf("filterTasks: Error scanning for outbound queue proofs for block %s (order Nonce %d): %w", blockHash.Hex(), order.Nonce, err)
 		}
 
 		// If we get a proof after scanning, we can set up the corresponding task to relay the order
 		if proofResult != nil && len(proofResult.proofs) > 0 {
-			log.Infof("filterTasks: Found %d proofs for block %s, commitment %s (order Nonce %d)", len(proofResult.proofs), blockHash.Hex(), commitmentHash.Hex(), order.Nonce)
 			task := Task{
 				Header:        header,
 				MessageProofs: &proofResult.proofs,
 				ProofInput:    nil, // ProofInput is gathered later in gatherProofInputs
 			}
 			tasks = append(tasks, &task)
-			log.Infof("filterTasks: Created task for message nonce %d from block %d (solochain block %s)", order.Nonce, orderBlockNumber, blockHash.Hex())
-
 		} else {
-			log.Infof("filterTasks: No proofs generated by scanForOutboundQueueProofs for solochain block %s (commitment %s), skipping order nonce %d.", blockHash.Hex(), commitmentHash.Hex(), order.Nonce)
-			// log.Debugf("No proofs generated by scanForOutboundQueueProofs for solochain block %v (commitment %s), skipping order nonce %d.", blockHash.Hex(), commitmentHash.Hex(), order.Nonce)
+			log.Warnf("filterTasks: No proofs generated by scanForOutboundQueueProofs for solochain block %v (commitment %s), skipping order nonce %d.", blockHash.Hex(), commitmentHash.Hex(), order.Nonce)
 		}
 	}
-
-	log.Infof("filterTasks: Finished filtering. Created %d tasks from %d pending orders.", len(tasks), len(pendingOrders))
 	return tasks, nil
 }
 
@@ -283,7 +247,7 @@ func (s *Scanner) gatherProofInputs(
 
 		log.WithFields(log.Fields{
 			"BlockNumber": task.Header.Number,
-		}).Debug("Gathering proof inputs for block")
+		}).Debug("Gathering proof inputs for message commitment root")
 
 		solochainBlockNumber := uint64(task.Header.Number)
 
@@ -349,7 +313,7 @@ func scanForOutboundQueueProofs(
 	for i, message := range messages {
 		messageProof, err := fetchMessageProof(api, blockHash, uint64(i), message)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to fetch message proof for index %d in block %s: %v", i, blockHash.Hex(), err)
+			return nil, fmt.Errorf("Failed to fetch message proof for message index %d in block %s: %w", i, blockHash.Hex(), err)
 		}
 		// Check that the merkle root in the proof matches the commitment hash
 		if messageProof.Proof.Root != commitmentHash {
@@ -431,7 +395,7 @@ func (s *Scanner) isNonceRelayed(ctx context.Context, nonce uint64) (bool, error
 	}
 	isRelayed, err = gatewayContract.V2IsDispatched(&options, nonce)
 	if err != nil {
-		return isRelayed, fmt.Errorf("Checking if nonce %d is relayed to Ethereum from gateway contract: %w", nonce, err)
+		return isRelayed, fmt.Errorf("Failed checking if nonce %d has been relayed to Ethereum Gateway contract (address %s): %w", nonce, gatewayAddress.Hex(), err)
 	}
 	return isRelayed, nil
 }
@@ -468,7 +432,7 @@ func (s *Scanner) findOrderUndelivered(
 		// Check if the order has been relayed
 		isRelayed, err := s.isNonceRelayed(ctx, uint64(undeliveredOrder.Nonce))
 		if err != nil {
-			return nil, fmt.Errorf("Error checking if nonce %d is relayed for undelivered order check: %v", undeliveredOrder.Nonce, err)
+			return nil, fmt.Errorf("Error checking if nonce %d has been relayed: %w", undeliveredOrder.Nonce, err)
 		}
 		if isRelayed {
 			// If it's been relayed to Ethereum, it's a candidate for needing a delivery receipt on solochain.
@@ -517,10 +481,10 @@ func GetDestinations(message OutboundQueueMessage) ([]string, error) {
 			transferTokenArguments := abi.Arguments{{Type: addressTy}, {Type: addressTy}, {Type: uint256Ty}}
 			decodedTransferToken, err := transferTokenArguments.Unpack(command.Params)
 			if err != nil {
-				return destinations, fmt.Errorf("OFAC: unpack UnlockNative params: %w", err)
+				return destinations, fmt.Errorf("OFAC: failed to unpack UnlockNative command params: %w", err)
 			}
 			if len(decodedTransferToken) < 3 {
-				return destinations, errors.New("OFAC: not enough params for UnlockNative to find recipient")
+				return destinations, fmt.Errorf("OFAC: not enough params in UnlockNative command to find recipient")
 			}
 			addressValue := decodedTransferToken[1].(common.Address)
 			address = addressValue.String()
@@ -530,10 +494,10 @@ func GetDestinations(message OutboundQueueMessage) ([]string, error) {
 			arguments := abi.Arguments{{Type: bytes32Ty}, {Type: addressTy}, {Type: uint256Ty}}
 			decodedMessage, err := arguments.Unpack(command.Params)
 			if err != nil {
-				return destinations, fmt.Errorf("OFAC: unpack MintForeignToken params: %w", err)
+				return destinations, fmt.Errorf("OFAC: failed to unpack MintForeignToken command params: %w", err)
 			}
 			if len(decodedMessage) < 3 {
-				return destinations, fmt.Errorf("OFAC: not enough params for MintForeignToken to find recipient")
+				return destinations, fmt.Errorf("OFAC: not enough params in MintForeignToken command to find recipient")
 			}
 
 			addressValue := decodedMessage[1].(common.Address)

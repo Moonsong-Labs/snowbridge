@@ -138,38 +138,17 @@ func init() {
 // --- End ABI Encoding Structs and Setup ---
 
 func CreateMessagesMerkleProof(messages []OutboundQueueMessage, messageNonce uint64) (MerkleProofData, error) {
+	log.Debugf("Sorting messages and creating merkle proof for message nonce %d", messageNonce)
+
 	// Sort slice by message nonce (TODO: Sort probably not needed since messages are appeneded in order)
 	sort.Sort(ByOutboundMessage(messages))
-	messagesStr := make([]string, len(messages))
-	for i, msg := range messages {
-		commandsStr := ""
-		for _, command := range msg.Commands {
-			commandsStr += fmt.Sprintf("Command{Kind: %d, MaxDispatchGas: %d, Params: %s}, ", command.Kind, command.MaxDispatchGas, command.Params.Hex())
-		}
-		// Remove trailing comma and space
-		if len(commandsStr) > 0 {
-			commandsStr = commandsStr[:len(commandsStr)-2]
-		}
-		messagesStr[i] = fmt.Sprintf("Message{Origin: %s, Nonce: %d, Topic: %s, Commands: [%s]}", msg.Origin.Hex(), msg.Nonce, msg.Topic.Hex(), commandsStr)
-	}
-	log.Infof("Sorted messages: %v", messagesStr)
-	log.Infof("Message nonce of message to prove: %d", messageNonce)
 
 	// Loop messages, convert to pre leaves and find message being proven
 	preLeaves := make([][]byte, 0, len(messages))
 	var messageToProve []byte
 	var messageIndex int64
 	for i, message := range messages {
-		commandsStr := ""
-		for _, command := range message.Commands {
-			commandsStr += fmt.Sprintf("Command{Kind: %d, MaxDispatchGas: %d, Params: %s}, ", command.Kind, command.MaxDispatchGas, command.Params.Hex())
-		}
-		// Remove trailing comma and space
-		if len(commandsStr) > 0 {
-			commandsStr = commandsStr[:len(commandsStr)-2]
-		}
-		formattedMessage := fmt.Sprintf("Message{Origin: %s, Nonce: %d, Topic: %s, Commands: [%s]}", message.Origin.Hex(), message.Nonce, message.Topic.Hex(), commandsStr)
-		log.Infof("Processing message at index %d: %s", i, formattedMessage)
+		log.Debugf("Processing message at index %d: %v", i, message)
 
 		abiCommands := make([]AbiCommandWrapper, len(message.Commands))
 		for j, cmd := range message.Commands {
@@ -194,7 +173,7 @@ func CreateMessagesMerkleProof(messages []OutboundQueueMessage, messageNonce uin
 
 		preLeaves = append(preLeaves, preLeaf)
 		if uint64(message.Nonce) == messageNonce {
-			log.Infof("Message to prove found! Index: %d, Nonce: %d. ABI Encoded ProvenPreLeaf will be used.", i, message.Nonce)
+			log.Debugf("Message to prove found! Index: %d, Nonce: %d. ABI Encoded ProvenPreLeaf will be used.", i, message.Nonce)
 			messageToProve = preLeaf
 			messageIndex = int64(i)
 		}
@@ -206,15 +185,6 @@ func CreateMessagesMerkleProof(messages []OutboundQueueMessage, messageNonce uin
 	if err != nil {
 		return MerkleProofData{}, fmt.Errorf("create parachain merkle proof: %w", err)
 	}
-	log.Infof("Merkle proof generated!")
-	log.Infof("ProvenPreLeaf (ABI Encoded): %s", HexBytes(messageToProve).Hex())
-	log.Infof("ProvenLeaf (Hashed ABI Encoded PreLeaf): %s", HexBytes(leaf).Hex())
-	log.Infof("Root: %s", HexBytes(root).Hex())
-	proofHex := make([]string, len(proof))
-	for i, pItem := range proof {
-		proofHex[i] = HexBytes(pItem[:]).Hex()
-	}
-	log.Infof("Proof: %v", proofHex)
 
 	return MerkleProofData{
 		PreLeaves:       preLeaves,
