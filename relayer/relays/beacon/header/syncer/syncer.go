@@ -214,6 +214,7 @@ func (s *Syncer) GetCheckpointAtSlot(slot uint64) (scale.BeaconCheckpoint, error
 func (s *Syncer) GetSyncCommitteePeriodUpdate(period uint64, lastFinalizedSlot uint64) (scale.Update, error) {
 	update, err := s.GetSyncCommitteePeriodUpdateFromEndpoint(period)
 	if err != nil {
+		log.Println("ERROR HERE: GetSyncCommitteePeriodUpdate")
 		log.WithFields(log.Fields{"period": period, "err": err}).Warn("fetch sync committee update period light client failed, trying building update manually")
 		update, err = s.GetFinalizedUpdateWithSyncCommittee(period)
 		if err != nil {
@@ -262,6 +263,7 @@ func (s *Syncer) GetSyncCommitteePeriodUpdateFromEndpoint(from uint64) (scale.Up
 
 	blockRootsProof, err := s.GetBlockRoots(uint64(finalizedHeader.Slot))
 	if err != nil {
+		log.Println("ERROR HERE: GetSyncCommitteePeriodUpdateFromEndpoint")
 		return scale.Update{}, fmt.Errorf("fetch block roots proof: %w", err)
 	}
 
@@ -307,6 +309,7 @@ func (s *Syncer) GetBlockRoots(slot uint64) (scale.BlockRootProof, error) {
 
 	data, err := s.getBeaconState(slot)
 	if err != nil {
+		log.Println("ERROR HERE: GetBlockRoots")
 		return blockRootProof, fmt.Errorf("fetch beacon state: %w", err)
 	}
 
@@ -985,6 +988,7 @@ func (s *Syncer) getBeaconState(slot uint64) ([]byte, error) {
 		var storeErr error
 		data, storeErr = s.store.GetBeaconStateData(slot)
 		if storeErr != nil {
+			log.Println("ERROR HERE: getBeaconState")
 			log.WithFields(log.Fields{"apiError": apiErr, "storeErr": storeErr}).Warn("fetch beacon state from api and store failed")
 			return nil, ErrBeaconStateUnavailable
 		}
