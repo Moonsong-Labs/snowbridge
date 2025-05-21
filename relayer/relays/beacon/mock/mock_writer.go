@@ -34,10 +34,10 @@ func (m *Writer) BatchCall(ctx context.Context, extrinsic []string, calls []inte
 	return nil
 }
 
-func (m *Writer) WriteToParachainAndRateLimit(ctx context.Context, extrinsicName string, payload ...interface{}) error {
+func (m *Writer) WriteToSolochainAndRateLimit(ctx context.Context, extrinsicName string, payload ...interface{}) error {
 	return nil
 }
-func (m *Writer) WriteToParachainAndWatch(ctx context.Context, extrinsicName string, payload ...interface{}) error {
+func (m *Writer) WriteToSolochainAndWatch(ctx context.Context, extrinsicName string, payload ...interface{}) error {
 	update, ok := payload[0].(scale.UpdatePayload)
 	if ok {
 		m.LastFinalizedState.BeaconSlot = uint64(update.FinalizedHeader.Slot)

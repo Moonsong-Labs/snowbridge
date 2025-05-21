@@ -8,8 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
-	"github.com/snowfork/snowbridge/relayer/chain/parachain"
-	"github.com/snowfork/snowbridge/relayer/chain/relaychain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/contracts"
 	"github.com/snowfork/snowbridge/relayer/crypto/secp256k1"
 
@@ -17,32 +16,29 @@ import (
 )
 
 type OnDemandRelay struct {
-	config           *Config
-	ethereumConn     *ethereum.Connection
-	parachainConn    *parachain.Connection
-	relaychainConn   *relaychain.Connection
-	polkadotListener *PolkadotListener
-	ethereumWriter   *EthereumWriter
-	gatewayContract  *contracts.Gateway
-	tokenBucket      *TokenBucket
+	config            *Config
+	ethereumConn      *ethereum.Connection
+	solochainConn     *solochain.Connection
+	solochainListener *SolochainListener
+	ethereumWriter    *EthereumWriter
+	gatewayContract   *contracts.Gateway
+	tokenBucket       *TokenBucket
 }
 
 func NewOnDemandRelay(config *Config, ethereumKeypair *secp256k1.Keypair) (*OnDemandRelay, error) {
 	ethereumConn := ethereum.NewConnection(&config.Sink.Ethereum, ethereumKeypair)
-	relaychainConn := relaychain.NewConnection(config.Source.Polkadot.Endpoint)
-	parachainConn := parachain.NewConnection(config.Source.BridgeHub.Endpoint, nil)
+	solochainConn := solochain.NewConnection(config.Source.Solochain.Endpoint, nil)
 
-	polkadotListener := NewPolkadotListener(&config.Source, relaychainConn)
+	solochainListener := NewSolochainListener(&config.Source, solochainConn)
 	ethereumWriter := NewEthereumWriter(&config.Sink, ethereumConn)
 
 	relay := OnDemandRelay{
-		config:           config,
-		ethereumConn:     ethereumConn,
-		parachainConn:    parachainConn,
-		relaychainConn:   relaychainConn,
-		polkadotListener: polkadotListener,
-		ethereumWriter:   ethereumWriter,
-		gatewayContract:  nil,
+		config:            config,
+		ethereumConn:      ethereumConn,
+		solochainConn:     solochainConn,
+		solochainListener: solochainListener,
+		ethereumWriter:    ethereumWriter,
+		gatewayContract:   nil,
 		tokenBucket: NewTokenBucket(
 			config.OnDemandSync.MaxTokens,
 			config.OnDemandSync.RefillAmount,
@@ -58,13 +54,9 @@ func (relay *OnDemandRelay) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("connect to ethereum: %w", err)
 	}
-	err = relay.relaychainConn.ConnectWithHeartBeat(ctx, 30*time.Second)
+	err = relay.solochainConn.ConnectWithHeartBeat(ctx, 30*time.Second)
 	if err != nil {
-		return fmt.Errorf("connect to relaychain: %w", err)
-	}
-	err = relay.parachainConn.ConnectWithHeartBeat(ctx, 30*time.Second)
-	if err != nil {
-		return fmt.Errorf("connect to parachain: %w", err)
+		return fmt.Errorf("connect to solochain: %w", err)
 	}
 	err = relay.ethereumWriter.initialize(ctx)
 	if err != nil {
@@ -84,7 +76,7 @@ func (relay *OnDemandRelay) Start(ctx context.Context) error {
 		sleep(ctx, time.Minute*1)
 		log.Info("Starting check")
 
-		paraNonce, ethNonce, err := relay.queryNonces(ctx)
+		soloNonce, ethNonce, err := relay.queryNonces(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return nil
@@ -94,11 +86,11 @@ func (relay *OnDemandRelay) Start(ctx context.Context) error {
 		}
 
 		log.WithFields(log.Fields{
-			"paraNonce": paraNonce,
+			"soloNonce": soloNonce,
 			"ethNonce":  ethNonce,
 		}).Info("Nonces checked")
 
-		if paraNonce > ethNonce {
+		if soloNonce > ethNonce {
 
 			// Check if we are rate-limited
 			if !relay.tokenBucket.TryConsume(1) {
@@ -108,7 +100,7 @@ func (relay *OnDemandRelay) Start(ctx context.Context) error {
 
 			log.Info("Performing sync")
 
-			beefyBlockHash, err := relay.relaychainConn.API().RPC.Beefy.GetFinalizedHead()
+			beefyBlockHash, err := relay.solochainConn.API().RPC.Beefy.GetFinalizedHead()
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					return nil
@@ -117,7 +109,7 @@ func (relay *OnDemandRelay) Start(ctx context.Context) error {
 				continue
 			}
 
-			header, err := relay.relaychainConn.API().RPC.Chain.GetHeader(beefyBlockHash)
+			header, err := relay.solochainConn.API().RPC.Chain.GetHeader(beefyBlockHash)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					return nil
@@ -137,7 +129,7 @@ func (relay *OnDemandRelay) Start(ctx context.Context) error {
 
 			log.Info("Sync completed")
 
-			relay.waitUntilMessagesSynced(ctx, paraNonce)
+			relay.waitUntilMessagesSynced(ctx, soloNonce)
 		}
 	}
 }
@@ -171,9 +163,9 @@ func sleep(ctx context.Context, d time.Duration) {
 }
 
 func (relay *OnDemandRelay) queryNonces(ctx context.Context) (uint64, uint64, error) {
-	paraNonce, err := relay.fetchLatestParachainNonce(ctx)
+	paraNonce, err := relay.fetchLatestSolochainNonce(ctx)
 	if err != nil {
-		return 0, 0, fmt.Errorf("fetch latest parachain nonce: %w", err)
+		return 0, 0, fmt.Errorf("fetch latest solochain nonce: %w", err)
 	}
 
 	ethNonce, err := relay.fetchEthereumNonce(ctx)
@@ -184,7 +176,7 @@ func (relay *OnDemandRelay) queryNonces(ctx context.Context) (uint64, uint64, er
 	return paraNonce, ethNonce, nil
 }
 
-func (relay *OnDemandRelay) fetchLatestParachainNonce(_ context.Context) (uint64, error) {
+func (relay *OnDemandRelay) fetchLatestSolochainNonce(_ context.Context) (uint64, error) {
 	// paraNonceKey, err := types.CreateStorageKey(
 	// 	relay.parachainConn.Metadata(), "EthereumOutboundQueue", "Nonce",
 	// 	relay.assetHubChannelID[:], nil,
@@ -241,7 +233,7 @@ func (relay *OnDemandRelay) sync(ctx context.Context, blockNumber uint64) error 
 	}
 
 	// generate beefy update for that specific relay block
-	task, err := relay.polkadotListener.generateBeefyUpdate(blockNumber)
+	task, err := relay.solochainListener.generateBeefyUpdate(blockNumber)
 	if err != nil {
 		return fmt.Errorf("fail to generate next beefy request: %w", err)
 	}

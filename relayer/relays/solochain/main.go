@@ -1,4 +1,4 @@
-package parachain
+package solochain
 
 import (
 	"context"
@@ -9,8 +9,7 @@ import (
 
 	"github.com/snowfork/go-substrate-rpc-client/v4/signature"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
-	"github.com/snowfork/snowbridge/relayer/chain/parachain"
-	"github.com/snowfork/snowbridge/relayer/chain/relaychain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/crypto/secp256k1"
 
 	"github.com/snowfork/snowbridge/relayer/ofac"
@@ -24,13 +23,12 @@ import (
 
 type Relay struct {
 	config                *Config
-	parachainConn         *parachain.Connection
-	relaychainConn        *relaychain.Connection
+	solochainConn         *solochain.Connection
 	ethereumConnWriter    *ethereum.Connection
 	ethereumConnBeefy     *ethereum.Connection
 	ethereumChannelWriter *EthereumWriter
 	beefyListener         *BeefyListener
-	parachainWriter       *parachain.ParachainWriter
+	solochainWriter       *solochain.SolochainWriter
 	beaconHeader          *header.Header
 	headerCache           *ethereum.HeaderCache
 }
@@ -38,8 +36,7 @@ type Relay struct {
 func NewRelay(config *Config, ethKeypair *secp256k1.Keypair, substrateKeypair *signature.KeyringPair) (*Relay, error) {
 	log.Info("Creating worker")
 
-	parachainConn := parachain.NewConnection(config.Source.Parachain.Endpoint, nil)
-	relaychainConn := relaychain.NewConnection(config.Source.Polkadot.Endpoint)
+	solochainConn := solochain.NewConnection(config.Source.Solochain.Endpoint, nil)
 
 	ethereumConnWriter := ethereum.NewConnection(&config.Sink.Ethereum, ethKeypair)
 	ethereumConnBeefy := ethereum.NewConnection(&config.Source.Ethereum, ethKeypair)
@@ -63,16 +60,15 @@ func NewRelay(config *Config, ethKeypair *secp256k1.Keypair, substrateKeypair *s
 		&config.Source,
 		&config.Schedule,
 		ethereumConnBeefy,
-		relaychainConn,
-		parachainConn,
+		solochainConn,
 		ofacClient,
 		tasks,
 	)
 
-	parachainWriterConn := parachain.NewConnection(config.Source.Parachain.Endpoint, substrateKeypair)
+	solochainWriterConn := solochain.NewConnection(config.Source.Solochain.Endpoint, substrateKeypair)
 
-	parachainWriter := parachain.NewParachainWriter(
-		parachainWriterConn,
+	solochainWriter := solochain.NewSolochainWriter(
+		solochainWriterConn,
 		8,
 	)
 	headerCache, err := ethereum.NewHeaderBlockCache(
@@ -86,7 +82,7 @@ func NewRelay(config *Config, ethKeypair *secp256k1.Keypair, substrateKeypair *s
 	store.Connect()
 	beaconAPI := api.NewBeaconClient(config.Source.Beacon.Endpoint, config.Source.Beacon.StateEndpoint)
 	beaconHeader := header.New(
-		parachainWriter,
+		solochainWriter,
 		beaconAPI,
 		config.Source.Beacon.Spec,
 		&store,
@@ -95,20 +91,19 @@ func NewRelay(config *Config, ethKeypair *secp256k1.Keypair, substrateKeypair *s
 	)
 	return &Relay{
 		config:                config,
-		parachainConn:         parachainConn,
-		relaychainConn:        relaychainConn,
+		solochainConn:         solochainConn,
 		ethereumConnWriter:    ethereumConnWriter,
 		ethereumConnBeefy:     ethereumConnBeefy,
 		ethereumChannelWriter: ethereumChannelWriter,
 		beefyListener:         beefyListener,
-		parachainWriter:       parachainWriter,
+		solochainWriter:       solochainWriter,
 		beaconHeader:          &beaconHeader,
 		headerCache:           headerCache,
 	}, nil
 }
 
 func (relay *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
-	err := relay.parachainConn.ConnectWithHeartBeat(ctx, 30*time.Second)
+	err := relay.solochainConn.ConnectWithHeartBeat(ctx, 30*time.Second)
 	if err != nil {
 		return err
 	}
@@ -123,11 +118,6 @@ func (relay *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
 		return fmt.Errorf("unable to connect to ethereum: beefy: %w", err)
 	}
 
-	err = relay.relaychainConn.ConnectWithHeartBeat(ctx, 30*time.Second)
-	if err != nil {
-		return err
-	}
-
 	log.Info("Starting beefy listener")
 	err = relay.beefyListener.Start(ctx, eg)
 	if err != nil {
@@ -140,7 +130,7 @@ func (relay *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
 		return err
 	}
 
-	err = relay.parachainWriter.Start(ctx, eg)
+	err = relay.solochainWriter.Start(ctx, eg)
 	if err != nil {
 		return err
 	}

@@ -20,7 +20,7 @@ import (
 	gethTrie "github.com/ethereum/go-ethereum/trie"
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
-	"github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/contracts"
 )
 
@@ -159,7 +159,7 @@ func printEthContractEventForSub(event *gethTypes.Log, trie *gethTrie.Trie) erro
 		return err
 	}
 
-	msgInner, ok := message.Args[0].(parachain.Message)
+	msgInner, ok := message.Args[0].(solochain.Message)
 	if !ok {
 		return err
 	}

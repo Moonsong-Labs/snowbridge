@@ -9,26 +9,26 @@ import (
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/snowfork/snowbridge/relayer/chain/relaychain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/substrate"
 )
 
-type PolkadotListener struct {
+type SolochainListener struct {
 	config *SourceConfig
-	conn   *relaychain.Connection
+	conn   *solochain.Connection
 }
 
-func NewPolkadotListener(
+func NewSolochainListener(
 	config *SourceConfig,
-	conn *relaychain.Connection,
-) *PolkadotListener {
-	return &PolkadotListener{
+	conn *solochain.Connection,
+) *SolochainListener {
+	return &SolochainListener{
 		config: config,
 		conn:   conn,
 	}
 }
 
-func (li *PolkadotListener) Start(
+func (li *SolochainListener) Start(
 	ctx context.Context,
 	eg *errgroup.Group,
 	currentBeefyBlock uint64,
@@ -47,7 +47,7 @@ func (li *PolkadotListener) Start(
 	return requests, nil
 }
 
-func (li *PolkadotListener) scanCommitments(
+func (li *SolochainListener) scanCommitments(
 	ctx context.Context,
 	currentBeefyBlock uint64,
 	requests chan<- Request,
@@ -101,7 +101,7 @@ func (li *PolkadotListener) scanCommitments(
 	}
 }
 
-func (li *PolkadotListener) queryBeefyAuthorities(blockHash types.Hash) ([]substrate.Authority, error) {
+func (li *SolochainListener) queryBeefyAuthorities(blockHash types.Hash) ([]substrate.Authority, error) {
 	storageKey, err := types.CreateStorageKey(li.conn.Metadata(), "Beefy", "Authorities", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create storage key: %w", err)
@@ -118,7 +118,7 @@ func (li *PolkadotListener) queryBeefyAuthorities(blockHash types.Hash) ([]subst
 	return authorities, nil
 }
 
-func (li *PolkadotListener) generateBeefyUpdate(relayBlockNumber uint64) (Request, error) {
+func (li *SolochainListener) generateBeefyUpdate(relayBlockNumber uint64) (Request, error) {
 	api := li.conn.API()
 	meta := li.conn.Metadata()
 	var request Request
@@ -148,7 +148,7 @@ func (li *PolkadotListener) generateBeefyUpdate(relayBlockNumber uint64) (Reques
 	return request, nil
 }
 
-func (li *PolkadotListener) findNextBeefyBlock(blockNumber uint64) (types.Hash, error) {
+func (li *SolochainListener) findNextBeefyBlock(blockNumber uint64) (types.Hash, error) {
 	api := li.conn.API()
 	var nextBeefyBlockHash, finalizedBeefyBlockHash types.Hash
 	var err error

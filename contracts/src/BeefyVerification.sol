@@ -48,7 +48,7 @@ library BeefyVerification {
 
     // SCALE-encode: MMRLeaf
     // Reference: https://github.com/paritytech/substrate/blob/14e0a0b628f9154c5a2c870062c3aac7df8983ed/primitives/consensus/beefy/src/mmr.rs#L52
-    function createMMRLeaf(MMRLeafPartial memory leaf, bytes32 parachainHeadsRoot)
+    function createMMRLeaf(MMRLeafPartial memory leaf, bytes32 beefyExtraField)
         internal
         pure
         returns (bytes32)
@@ -60,7 +60,7 @@ library BeefyVerification {
             ScaleCodec.encodeU64(leaf.nextAuthoritySetID),
             ScaleCodec.encodeU32(leaf.nextAuthoritySetLen),
             leaf.nextAuthoritySetRoot,
-            parachainHeadsRoot
+            beefyExtraField
         );
         return keccak256(encodedLeaf);
     }
