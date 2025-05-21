@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/cache"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/config"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/header/syncer"
@@ -31,13 +31,13 @@ var ErrBeaconHeaderNotFinalized = errors.New("beacon header not finalized")
 
 type Header struct {
 	cache              *cache.BeaconCache
-	writer             parachain.ChainWriter
+	writer             solochain.ChainWriter
 	syncer             *syncer.Syncer
 	protocol           *protocol.Protocol
 	updateSlotInterval uint64
 }
 
-func New(writer parachain.ChainWriter, client api.BeaconAPI, setting config.SpecSettings, store store.BeaconStore, protocol *protocol.Protocol, updateSlotInterval uint64) Header {
+func New(writer solochain.ChainWriter, client api.BeaconAPI, setting config.SpecSettings, store store.BeaconStore, protocol *protocol.Protocol, updateSlotInterval uint64) Header {
 	return Header{
 		cache:              cache.New(setting.SlotsInEpoch, setting.EpochsPerSyncCommitteePeriod),
 		writer:             writer,
@@ -50,7 +50,7 @@ func New(writer parachain.ChainWriter, client api.BeaconAPI, setting config.Spec
 func (h *Header) Sync(ctx context.Context, eg *errgroup.Group) error {
 	lastFinalizedHeaderState, err := h.writer.GetLastFinalizedHeaderState()
 	if err != nil {
-		return fmt.Errorf("fetch parachain last finalized header state: %w", err)
+		return fmt.Errorf("fetch solochain last finalized header state: %w", err)
 	}
 	latestSyncedPeriod := h.protocol.ComputeSyncPeriodAtSlot(lastFinalizedHeaderState.BeaconSlot)
 
@@ -162,7 +162,7 @@ func (h *Header) SyncCommitteePeriodUpdate(ctx context.Context, period uint64) e
 		"period":                period,
 	}).Info("syncing sync committee for period")
 
-	err = h.writer.WriteToParachainAndWatch(ctx, "EthereumBeaconClient.submit", update.Payload)
+	err = h.writer.WriteToSolochainAndWatch(ctx, "EthereumBeaconClient.submit", update.Payload)
 	if err != nil {
 		return err
 	}
@@ -183,7 +183,7 @@ func (h *Header) SyncCommitteePeriodUpdate(ctx context.Context, period uint64) e
 }
 
 func (h *Header) SyncFinalizedHeader(ctx context.Context) error {
-	// When the chain has been processed up until now, keep getting finalized block updates and send that to the parachain
+	// When the chain has been processed up until now, keep getting finalized block updates and send that to the solochain
 	finalizedHeader, err := h.syncer.GetFinalizedHeader()
 	if err != nil {
 		return fmt.Errorf("fetch finalized header from Ethereum beacon client: %w", err)
@@ -221,9 +221,9 @@ func (h *Header) SyncFinalizedHeader(ctx context.Context) error {
 // Write the provided finalized header update (possibly containing a sync committee) on-chain and check if it was
 // imported successfully. Update the cache if it has and add the finalized header to the checkpoint cache.
 func (h *Header) updateFinalizedHeaderOnchain(ctx context.Context, update scale.Update) error {
-	err := h.writer.WriteToParachainAndWatch(ctx, "EthereumBeaconClient.submit", update.Payload)
+	err := h.writer.WriteToSolochainAndWatch(ctx, "EthereumBeaconClient.submit", update.Payload)
 	if err != nil {
-		return fmt.Errorf("write to parachain: %w", err)
+		return fmt.Errorf("write to solochain: %w", err)
 	}
 
 	lastFinalizedHeaderState, err := h.writer.GetLastFinalizedHeaderState()

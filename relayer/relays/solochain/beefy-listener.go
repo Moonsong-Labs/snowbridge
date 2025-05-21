@@ -13,7 +13,7 @@ import (
 
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
-	"github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/contracts"
 	"github.com/snowfork/snowbridge/relayer/crypto/merkle"
 	"github.com/snowfork/snowbridge/relayer/ofac"
@@ -26,7 +26,7 @@ type BeefyListener struct {
 	scheduleConfig      *ScheduleConfig
 	ethereumConn        *ethereum.Connection
 	beefyClientContract *contracts.BeefyClient
-	solochainConn       *parachain.Connection
+	solochainConn       *solochain.Connection
 	ofac                *ofac.OFAC
 	tasks               chan<- *Task
 	scanner             *Scanner
@@ -36,7 +36,7 @@ func NewBeefyListener(
 	config *SourceConfig,
 	scheduleConfig *ScheduleConfig,
 	ethereumConn *ethereum.Connection,
-	solochainConn *parachain.Connection,
+	solochainConn *solochain.Connection,
 	ofac *ofac.OFAC,
 	tasks chan<- *Task,
 ) *BeefyListener {

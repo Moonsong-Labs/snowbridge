@@ -8,7 +8,7 @@ import (
 	"syscall"
 
 	"github.com/sirupsen/logrus"
-	"github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/config"
 	"github.com/spf13/cobra"
@@ -64,7 +64,7 @@ func run(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	keypair, err := parachain.ResolvePrivateKey(privateKey, privateKeyFile, privateKeyID)
+	keypair, err := solochain.ResolvePrivateKey(privateKey, privateKeyFile, privateKeyID)
 	if err != nil {
 		return err
 	}

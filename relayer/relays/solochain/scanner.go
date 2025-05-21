@@ -15,7 +15,7 @@ import (
 	gsrpc "github.com/snowfork/go-substrate-rpc-client/v4"
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
-	"github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/contracts"
 	"github.com/snowfork/snowbridge/relayer/ofac"
 )
@@ -23,7 +23,7 @@ import (
 type Scanner struct {
 	config   *SourceConfig
 	ethConn  *ethereum.Connection
-	soloConn *parachain.Connection
+	soloConn *solochain.Connection
 	ofac     *ofac.OFAC
 	tasks    chan<- *Task
 }

@@ -12,7 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
-	"github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/contracts"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/header"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/header/syncer/scale"
@@ -133,7 +133,7 @@ func (relay *Relay) makeInboundMessage(
 	ctx context.Context,
 	headerCache *ethereum.HeaderCache,
 	event *contracts.GatewayInboundMessageDispatched,
-) (*parachain.Message, error) {
+) (*solochain.Message, error) {
 	receiptTrie, err := headerCache.GetReceiptTrie(ctx, event.Raw.BlockHash)
 	if err != nil {
 		log.WithFields(logrus.Fields{
@@ -215,7 +215,7 @@ func (relay *Relay) doSubmitDeliveryProof(ctx context.Context, ev *contracts.Gat
 }
 
 // writeToSolochain writes a delivery receipt to solochain
-func (relay *Relay) writeToSolochain(ctx context.Context, proof scale.ProofPayload, inboundMsg *parachain.Message) error {
+func (relay *Relay) writeToSolochain(ctx context.Context, proof scale.ProofPayload, inboundMsg *solochain.Message) error {
 	inboundMsg.Proof.ExecutionProof = proof.HeaderPayload
 
 	log.WithFields(logrus.Fields{
@@ -223,7 +223,7 @@ func (relay *Relay) writeToSolochain(ctx context.Context, proof scale.ProofPaylo
 		"Proof":    inboundMsg.Proof,
 	}).Debug("Generated message from Ethereum log")
 
-	err := relay.solochainWriter.WriteToParachainAndWatch(ctx, "OutboundQueueV2.submit_delivery_receipt", inboundMsg)
+	err := relay.solochainWriter.WriteToSolochainAndWatch(ctx, "OutboundQueueV2.submit_delivery_receipt", inboundMsg)
 	if err != nil {
 		return fmt.Errorf("Submitting delivery receipt to solochain outbound queue v2: %w", err)
 	}

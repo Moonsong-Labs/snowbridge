@@ -10,7 +10,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
-	"github.com/snowfork/snowbridge/relayer/chain/relaychain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/relays/beefy"
 	"github.com/snowfork/snowbridge/relayer/relays/util"
 	"github.com/spf13/cobra"
@@ -39,23 +39,23 @@ func ScanBeefyFn(cmd *cobra.Command, _ []string) error {
 	log.SetOutput(logrus.WithFields(logrus.Fields{"logger": "stdlib"}).WriterLevel(logrus.InfoLevel))
 	logrus.SetLevel(logrus.DebugLevel)
 
-	polkadotUrl, _ := cmd.Flags().GetString("polkadot-url")
-	relaychainConn := relaychain.NewConnection(polkadotUrl)
-	relaychainConn.Connect(ctx)
+	solochainUrl, _ := cmd.Flags().GetString("solochain-url")
+	solochainConn := solochain.NewConnection(solochainUrl, nil)
+	solochainConn.Connect(ctx)
 
 	config := beefy.SourceConfig{}
-	polkadotListener := beefy.NewPolkadotListener(
+	solochainListener := beefy.NewSolochainListener(
 		&config,
-		relaychainConn,
+		solochainConn,
 	)
 
 	beefyBlock, _ := cmd.Flags().GetUint64("beefy-block")
 	logrus.WithFields(logrus.Fields{
-		"polkadot-url": polkadotUrl,
-		"beefy-block":  beefyBlock,
-	}).Info("Connected to relaychain.")
+		"solochain-url": solochainUrl,
+		"beefy-block":   beefyBlock,
+	}).Info("Connected to solochain.")
 
-	commitments, err := polkadotListener.Start(ctx, eg, beefyBlock)
+	commitments, err := solochainListener.Start(ctx, eg, beefyBlock)
 	if err != nil {
 		logrus.WithError(err).Fatalf("could not start")
 	}
@@ -118,21 +118,21 @@ func ScanSingleBeefyBlockFn(cmd *cobra.Command, _ []string) error {
 	log.SetOutput(logrus.WithFields(logrus.Fields{"logger": "stdlib"}).WriterLevel(logrus.InfoLevel))
 	logrus.SetLevel(logrus.DebugLevel)
 
-	polkadotUrl, _ := cmd.Flags().GetString("polkadot-url")
-	relaychainConn := relaychain.NewConnection(polkadotUrl)
-	err := relaychainConn.Connect(ctx)
+	solochainUrl, _ := cmd.Flags().GetString("solochain-url")
+	solochainConn := solochain.NewConnection(solochainUrl, nil)
+	err := solochainConn.Connect(ctx)
 	if err != nil {
 		fmt.Errorf("connect: %w", err)
 		return err
 	}
-	api := relaychainConn.API()
+	api := solochainConn.API()
 	// metadata := relaychainConn.Metadata()
 
 	beefyBlockNumber, _ := cmd.Flags().GetUint64("beefy-block")
 	logrus.WithFields(logrus.Fields{
-		"polkadot-url": polkadotUrl,
-		"beefy-block":  beefyBlockNumber,
-	}).Info("Connected to relaychain.")
+		"solochain-url": solochainUrl,
+		"beefy-block":   beefyBlockNumber,
+	}).Info("Connected to solochain.")
 
 	beefyBlockHash, err := api.RPC.Chain.GetBlockHash(beefyBlockNumber)
 	if err != nil {

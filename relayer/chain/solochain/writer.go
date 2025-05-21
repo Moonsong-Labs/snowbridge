@@ -1,4 +1,4 @@
-package parachain
+package solochain
 
 import (
 	"context"
@@ -20,8 +20,8 @@ import (
 
 type ChainWriter interface {
 	BatchCall(ctx context.Context, extrinsic []string, calls []interface{}) error
-	WriteToParachainAndRateLimit(ctx context.Context, extrinsicName string, payload ...interface{}) error
-	WriteToParachainAndWatch(ctx context.Context, extrinsicName string, payload ...interface{}) error
+	WriteToSolochainAndRateLimit(ctx context.Context, extrinsicName string, payload ...interface{}) error
+	WriteToSolochainAndWatch(ctx context.Context, extrinsicName string, payload ...interface{}) error
 	GetLastFinalizedHeaderState() (state.FinalizedHeader, error)
 	GetFinalizedStateByStorageKey(key string) (scale.BeaconState, error)
 	GetLastBasicChannelBlockNumber() (uint64, error)
@@ -31,7 +31,7 @@ type ChainWriter interface {
 	GetFinalizedBeaconRootByIndex(index uint32) (types.H256, error)
 }
 
-type ParachainWriter struct {
+type SolochainWriter struct {
 	conn                 *Connection
 	nonce                uint32
 	pool                 *ExtrinsicPool
@@ -40,17 +40,17 @@ type ParachainWriter struct {
 	mu                   sync.Mutex
 }
 
-func NewParachainWriter(
+func NewSolochainWriter(
 	conn *Connection,
 	maxWatchedExtrinsics int64,
-) *ParachainWriter {
-	return &ParachainWriter{
+) *SolochainWriter {
+	return &SolochainWriter{
 		conn:                 conn,
 		maxWatchedExtrinsics: maxWatchedExtrinsics,
 	}
 }
 
-func (wr *ParachainWriter) Start(ctx context.Context, eg *errgroup.Group) error {
+func (wr *SolochainWriter) Start(ctx context.Context, eg *errgroup.Group) error {
 	err := wr.conn.ConnectWithHeartBeat(ctx, 30*time.Second)
 	if err != nil {
 		return err
@@ -73,7 +73,7 @@ func (wr *ParachainWriter) Start(ctx context.Context, eg *errgroup.Group) error 
 	return nil
 }
 
-func (wr *ParachainWriter) BatchCall(ctx context.Context, extrinsic []string, calls []interface{}) error {
+func (wr *SolochainWriter) BatchCall(ctx context.Context, extrinsic []string, calls []interface{}) error {
 	batchSize := int(wr.maxWatchedExtrinsics)
 	var j int
 	for i := 0; i < len(calls); i += batchSize {
@@ -90,7 +90,7 @@ func (wr *ParachainWriter) BatchCall(ctx context.Context, extrinsic []string, ca
 			}
 			encodedCalls[k] = *call
 		}
-		err := wr.WriteToParachainAndWatch(ctx, "Utility.batch_all", encodedCalls)
+		err := wr.WriteToSolochainAndWatch(ctx, "Utility.batch_all", encodedCalls)
 		if err != nil {
 			return fmt.Errorf("batch call failed: %w", err)
 		}
@@ -98,7 +98,7 @@ func (wr *ParachainWriter) BatchCall(ctx context.Context, extrinsic []string, ca
 	return nil
 }
 
-func (wr *ParachainWriter) WriteToParachainAndRateLimit(ctx context.Context, extrinsicName string, payload ...interface{}) error {
+func (wr *SolochainWriter) WriteToSolochainAndRateLimit(ctx context.Context, extrinsicName string, payload ...interface{}) error {
 	wr.mu.Lock()
 	defer wr.mu.Unlock()
 
@@ -119,11 +119,11 @@ func (wr *ParachainWriter) WriteToParachainAndRateLimit(ctx context.Context, ext
 	return nil
 }
 
-func (wr *ParachainWriter) WriteToParachainAndWatch(ctx context.Context, extrinsicName string, payload ...interface{}) error {
+func (wr *SolochainWriter) WriteToSolochainAndWatch(ctx context.Context, extrinsicName string, payload ...interface{}) error {
 	wr.mu.Lock()
 	defer wr.mu.Unlock()
 
-	sub, err := wr.writeToParachain(ctx, extrinsicName, payload...)
+	sub, err := wr.writeToSolochain(ctx, extrinsicName, payload...)
 	if err != nil {
 		return err
 	}
@@ -136,7 +136,7 @@ func (wr *ParachainWriter) WriteToParachainAndWatch(ctx context.Context, extrins
 		select {
 		case status := <-sub.Chan():
 			if status.IsDropped || status.IsInvalid || status.IsUsurped || status.IsFinalityTimeout {
-				return fmt.Errorf("parachain write status was dropped, invalid, usurped or finality timed out")
+				return fmt.Errorf("solochain write status was dropped, invalid, usurped or finality timed out")
 			}
 			if status.IsFinalized {
 				log.WithFields(log.Fields{
@@ -151,11 +151,11 @@ func (wr *ParachainWriter) WriteToParachainAndWatch(ctx context.Context, extrins
 	}
 }
 
-func (wr *ParachainWriter) GetLastBasicChannelBlockNumber() (uint64, error) {
-	return wr.getNumberFromParachain("EthereumInboundQueue", "LatestVerifiedBlockNumber")
+func (wr *SolochainWriter) GetLastBasicChannelBlockNumber() (uint64, error) {
+	return wr.getNumberFromSolochain("EthereumInboundQueue", "LatestVerifiedBlockNumber")
 }
 
-func (wr *ParachainWriter) GetLastBasicChannelNonceByAddresses(addresses []common.Address) (map[common.Address]uint64, error) {
+func (wr *SolochainWriter) GetLastBasicChannelNonceByAddresses(addresses []common.Address) (map[common.Address]uint64, error) {
 	addressNonceMap := make(map[common.Address]uint64, len(addresses))
 
 	for _, address := range addresses {
@@ -170,7 +170,7 @@ func (wr *ParachainWriter) GetLastBasicChannelNonceByAddresses(addresses []commo
 	return addressNonceMap, nil
 }
 
-func (wr *ParachainWriter) GetLastBasicChannelNonceByAddress(address common.Address) (uint64, error) {
+func (wr *SolochainWriter) GetLastBasicChannelNonceByAddress(address common.Address) (uint64, error) {
 	key, err := types.CreateStorageKey(wr.conn.Metadata(), "EthereumInboundQueue", "Nonce", address[:], nil)
 	if err != nil {
 		return 0, fmt.Errorf("create storage key for basic channel nonces: %w", err)
@@ -185,7 +185,7 @@ func (wr *ParachainWriter) GetLastBasicChannelNonceByAddress(address common.Addr
 	return uint64(nonce), nil
 }
 
-func (wr *ParachainWriter) GetLastFinalizedHeaderState() (state.FinalizedHeader, error) {
+func (wr *SolochainWriter) GetLastFinalizedHeaderState() (state.FinalizedHeader, error) {
 	finalizedState, err := wr.GetFinalizedStateByStorageKey("LatestFinalizedBlockRoot")
 	if err != nil {
 		return state.FinalizedHeader{}, fmt.Errorf("fetch FinalizedBeaconState: %w", err)
@@ -203,7 +203,7 @@ func (wr *ParachainWriter) GetLastFinalizedHeaderState() (state.FinalizedHeader,
 	}, nil
 }
 
-func (wr *ParachainWriter) GetFinalizedStateByStorageKey(key string) (scale.BeaconState, error) {
+func (wr *SolochainWriter) GetFinalizedStateByStorageKey(key string) (scale.BeaconState, error) {
 	storageRootKey, err := types.CreateStorageKey(wr.conn.Metadata(), "EthereumBeaconClient", key, nil, nil)
 	if err != nil {
 		return scale.BeaconState{}, fmt.Errorf("create storage key: %w", err)
@@ -230,7 +230,7 @@ func (wr *ParachainWriter) GetFinalizedStateByStorageKey(key string) (scale.Beac
 	}}, nil
 }
 
-func (wr *ParachainWriter) GetFinalizedHeaderStateByBlockRoot(blockRoot types.H256) (state.FinalizedHeader, error) {
+func (wr *SolochainWriter) GetFinalizedHeaderStateByBlockRoot(blockRoot types.H256) (state.FinalizedHeader, error) {
 	finalizedBeaconStateKey, err := types.CreateStorageKey(wr.conn.Metadata(), "EthereumBeaconClient", "FinalizedBeaconState", blockRoot[:], nil)
 	if err != nil {
 		return state.FinalizedHeader{}, fmt.Errorf("create storage key for FinalizedBeaconState: %w", err)
@@ -250,7 +250,7 @@ func (wr *ParachainWriter) GetFinalizedHeaderStateByBlockRoot(blockRoot types.H2
 	}, nil
 }
 
-func (wr *ParachainWriter) writeToParachain(ctx context.Context, extrinsicName string, payload ...interface{}) (*author.ExtrinsicStatusSubscription, error) {
+func (wr *SolochainWriter) writeToSolochain(ctx context.Context, extrinsicName string, payload ...interface{}) (*author.ExtrinsicStatusSubscription, error) {
 	extI, err := wr.prepExtrinstic(ctx, extrinsicName, payload...)
 	if err != nil {
 		return nil, err
@@ -264,7 +264,7 @@ func (wr *ParachainWriter) writeToParachain(ctx context.Context, extrinsicName s
 	return sub, nil
 }
 
-func (wr *ParachainWriter) queryAccountNonce() (uint32, error) {
+func (wr *SolochainWriter) queryAccountNonce() (uint32, error) {
 	addressHexString := strings.TrimPrefix(wr.conn.Keypair().Address, "0x")
 	addressAsBytes, err := hex.DecodeString(addressHexString)
 	if err != nil {
@@ -288,7 +288,7 @@ func (wr *ParachainWriter) queryAccountNonce() (uint32, error) {
 	return uint32(accountInfo.Nonce), nil
 }
 
-func (wr *ParachainWriter) prepExtrinstic(ctx context.Context, extrinsicName string, payload ...interface{}) (*types.Extrinsic, error) {
+func (wr *SolochainWriter) prepExtrinstic(ctx context.Context, extrinsicName string, payload ...interface{}) (*types.Extrinsic, error) {
 	meta, err := wr.conn.API().RPC.State.GetMetadataLatest()
 	if err != nil {
 		return nil, err
@@ -342,7 +342,7 @@ func (wr *ParachainWriter) prepExtrinstic(ctx context.Context, extrinsicName str
 	return &extI, nil
 }
 
-func (wr *ParachainWriter) prepCall(extrinsicName string, payload ...interface{}) (*types.Call, error) {
+func (wr *SolochainWriter) prepCall(extrinsicName string, payload ...interface{}) (*types.Call, error) {
 	meta, err := wr.conn.API().RPC.State.GetMetadataLatest()
 	if err != nil {
 		return nil, err
@@ -355,7 +355,7 @@ func (wr *ParachainWriter) prepCall(extrinsicName string, payload ...interface{}
 	return &c, nil
 }
 
-func (wr *ParachainWriter) getHashFromParachain(pallet, storage string) (common.Hash, error) {
+func (wr *SolochainWriter) getHashFromSolochain(pallet, storage string) (common.Hash, error) {
 	key, err := types.CreateStorageKey(wr.conn.Metadata(), pallet, storage, nil, nil)
 	if err != nil {
 		return common.Hash{}, fmt.Errorf("create storage key for %s:%s: %w", pallet, storage, err)
@@ -370,7 +370,7 @@ func (wr *ParachainWriter) getHashFromParachain(pallet, storage string) (common.
 	return common.HexToHash(hash.Hex()), nil
 }
 
-func (wr *ParachainWriter) getNumberFromParachain(pallet, storage string) (uint64, error) {
+func (wr *SolochainWriter) getNumberFromSolochain(pallet, storage string) (uint64, error) {
 	key, err := types.CreateStorageKey(wr.conn.Metadata(), pallet, storage, nil, nil)
 	if err != nil {
 		return 0, fmt.Errorf("create storage key for %s:%s: %w", pallet, storage, err)
@@ -385,7 +385,7 @@ func (wr *ParachainWriter) getNumberFromParachain(pallet, storage string) (uint6
 	return uint64(number), nil
 }
 
-func (wr *ParachainWriter) GetLastFinalizedStateIndex() (types.U32, error) {
+func (wr *SolochainWriter) GetLastFinalizedStateIndex() (types.U32, error) {
 	var index types.U32
 	key, err := types.CreateStorageKey(wr.conn.Metadata(), "EthereumBeaconClient", "FinalizedBeaconStateIndex", nil, nil)
 	if err != nil {
@@ -400,7 +400,7 @@ func (wr *ParachainWriter) GetLastFinalizedStateIndex() (types.U32, error) {
 	return index, nil
 }
 
-func (wr *ParachainWriter) GetFinalizedBeaconRootByIndex(index uint32) (types.H256, error) {
+func (wr *SolochainWriter) GetFinalizedBeaconRootByIndex(index uint32) (types.H256, error) {
 	var beaconRoot types.H256
 	encodedIndex, err := types.EncodeToBytes(types.NewU32(index))
 	if err != nil {

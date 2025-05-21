@@ -4,7 +4,7 @@ import (
 	"github.com/snowfork/snowbridge/relayer/cmd/run/beacon"
 	"github.com/snowfork/snowbridge/relayer/cmd/run/beefy"
 	"github.com/snowfork/snowbridge/relayer/cmd/run/execution"
-	"github.com/snowfork/snowbridge/relayer/cmd/run/parachain"
+	"github.com/snowfork/snowbridge/relayer/cmd/run/solochain"
 	"github.com/spf13/cobra"
 )
 
@@ -16,7 +16,7 @@ func Command() *cobra.Command {
 	}
 
 	cmd.AddCommand(beefy.Command())
-	cmd.AddCommand(parachain.Command())
+	cmd.AddCommand(solochain.Command())
 	cmd.AddCommand(beacon.Command())
 	cmd.AddCommand(execution.Command())
 

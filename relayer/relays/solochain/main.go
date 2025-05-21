@@ -9,7 +9,7 @@ import (
 
 	"github.com/snowfork/go-substrate-rpc-client/v4/signature"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
-	"github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/crypto/secp256k1"
 
 	"github.com/snowfork/snowbridge/relayer/ofac"
@@ -23,12 +23,12 @@ import (
 
 type Relay struct {
 	config                *Config
-	solochainConn         *parachain.Connection
+	solochainConn         *solochain.Connection
 	ethereumConnWriter    *ethereum.Connection
 	ethereumConnBeefy     *ethereum.Connection
 	ethereumChannelWriter *EthereumWriter
 	beefyListener         *BeefyListener
-	solochainWriter       *parachain.ParachainWriter
+	solochainWriter       *solochain.SolochainWriter
 	beaconHeader          *header.Header
 	headerCache           *ethereum.HeaderCache
 }
@@ -36,7 +36,7 @@ type Relay struct {
 func NewRelay(config *Config, ethKeypair *secp256k1.Keypair, substrateKeypair *signature.KeyringPair) (*Relay, error) {
 	log.Info("Creating worker")
 
-	solochainConn := parachain.NewConnection(config.Source.Solochain.Endpoint, nil)
+	solochainConn := solochain.NewConnection(config.Source.Solochain.Endpoint, nil)
 
 	ethereumConnWriter := ethereum.NewConnection(&config.Sink.Ethereum, ethKeypair)
 	ethereumConnBeefy := ethereum.NewConnection(&config.Source.Ethereum, ethKeypair)
@@ -65,9 +65,9 @@ func NewRelay(config *Config, ethKeypair *secp256k1.Keypair, substrateKeypair *s
 		tasks,
 	)
 
-	solochainWriterConn := parachain.NewConnection(config.Source.Solochain.Endpoint, substrateKeypair)
+	solochainWriterConn := solochain.NewConnection(config.Source.Solochain.Endpoint, substrateKeypair)
 
-	solochainWriter := parachain.NewParachainWriter(
+	solochainWriter := solochain.NewSolochainWriter(
 		solochainWriterConn,
 		8,
 	)

@@ -8,46 +8,46 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
-	"github.com/snowfork/snowbridge/relayer/chain/relaychain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/crypto/secp256k1"
 
 	log "github.com/sirupsen/logrus"
 )
 
 type Relay struct {
-	config           *Config
-	relaychainConn   *relaychain.Connection
-	ethereumConn     *ethereum.Connection
-	polkadotListener *PolkadotListener
-	ethereumWriter   *EthereumWriter
+	config            *Config
+	solochainConn     *solochain.Connection
+	ethereumConn      *ethereum.Connection
+	solochainListener *SolochainListener
+	ethereumWriter    *EthereumWriter
 }
 
 func NewRelay(config *Config, ethereumKeypair *secp256k1.Keypair) (*Relay, error) {
-	relaychainConn := relaychain.NewConnection(config.Source.Polkadot.Endpoint)
+	solochainConn := solochain.NewConnection(config.Source.Solochain.Endpoint, nil)
 	ethereumConn := ethereum.NewConnection(&config.Sink.Ethereum, ethereumKeypair)
 
-	polkadotListener := NewPolkadotListener(
+	solochainListener := NewSolochainListener(
 		&config.Source,
-		relaychainConn,
+		solochainConn,
 	)
 
 	ethereumWriter := NewEthereumWriter(&config.Sink, ethereumConn)
 
-	log.Info("Beefy relay created")
+	log.Info("Beefy solo created")
 
 	return &Relay{
-		config:           config,
-		relaychainConn:   relaychainConn,
-		ethereumConn:     ethereumConn,
-		polkadotListener: polkadotListener,
-		ethereumWriter:   ethereumWriter,
+		config:            config,
+		solochainConn:     solochainConn,
+		ethereumConn:      ethereumConn,
+		solochainListener: solochainListener,
+		ethereumWriter:    ethereumWriter,
 	}, nil
 }
 
 func (relay *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
-	err := relay.relaychainConn.ConnectWithHeartBeat(ctx, 30*time.Second)
+	err := relay.solochainConn.ConnectWithHeartBeat(ctx, 30*time.Second)
 	if err != nil {
-		return fmt.Errorf("create relaychain connection: %w", err)
+		return fmt.Errorf("create solochain connection: %w", err)
 	}
 
 	err = relay.ethereumConn.Connect(ctx)
@@ -68,9 +68,9 @@ func (relay *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
 		"validatorSetID": initialState.CurrentValidatorSetID,
 	}).Info("Retrieved current BeefyClient state")
 
-	requests, err := relay.polkadotListener.Start(ctx, eg, initialState.LatestBeefyBlock)
+	requests, err := relay.solochainListener.Start(ctx, eg, initialState.LatestBeefyBlock)
 	if err != nil {
-		return fmt.Errorf("initialize polkadot listener: %w", err)
+		return fmt.Errorf("initialize solochain listener: %w", err)
 	}
 
 	err = relay.ethereumWriter.Start(ctx, eg, requests)

@@ -10,10 +10,10 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	etrie "github.com/ethereum/go-ethereum/trie"
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
-	"github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 )
 
-func MakeMessageFromEvent(event *etypes.Log, receiptsTrie *etrie.Trie) (*parachain.Message, error) {
+func MakeMessageFromEvent(event *etypes.Log, receiptsTrie *etrie.Trie) (*solochain.Message, error) {
 	// RLP encode event log's Address, Topics, and Data
 	var buf bytes.Buffer
 	err := event.EncodeRLP(&buf)
@@ -26,7 +26,7 @@ func MakeMessageFromEvent(event *etypes.Log, receiptsTrie *etrie.Trie) (*paracha
 		return nil, err
 	}
 
-	proof := parachain.NewProofData()
+	proof := solochain.NewProofData()
 	err = receiptsTrie.Prove(receiptKey, proof)
 	if err != nil {
 		return nil, err
@@ -37,13 +37,13 @@ func MakeMessageFromEvent(event *etypes.Log, receiptsTrie *etrie.Trie) (*paracha
 		convertedTopics = append(convertedTopics, types.H256(topic))
 	}
 
-	m := parachain.Message{
-		EventLog: parachain.EventLog{
+	m := solochain.Message{
+		EventLog: solochain.EventLog{
 			Address: types.H160(event.Address),
 			Topics:  convertedTopics,
 			Data:    event.Data,
 		},
-		Proof: parachain.Proof{
+		Proof: solochain.Proof{
 			ReceiptProof: proof,
 		},
 	}

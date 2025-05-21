@@ -71,7 +71,7 @@ func importBeaconState(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("open finalized state file: %w", err)
 	}
 
-	p := protocol.New(conf.Source.Beacon.Spec, conf.Sink.Parachain.HeaderRedundancy)
+	p := protocol.New(conf.Source.Beacon.Spec, conf.Sink.Solochain.HeaderRedundancy)
 	store := store.New(conf.Source.Beacon.DataStore.Location, conf.Source.Beacon.DataStore.MaxEntries, *p)
 	beaconClient := api.NewBeaconClient(conf.Source.Beacon.Endpoint, conf.Source.Beacon.StateEndpoint)
 	syncer := syncer.New(beaconClient, &store, p)

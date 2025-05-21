@@ -183,7 +183,7 @@ func CreateMessagesMerkleProof(messages []OutboundQueueMessage, messageNonce uin
 	// https://github.com/paritytech/substrate/blob/ea387c634715793f806286abf1e64cabf9b7026f/frame/beefy-mmr/primitives/src/lib.rs#L45-L54
 	leaf, root, proof, err := merkle.GenerateMerkleProof(preLeaves, messageIndex)
 	if err != nil {
-		return MerkleProofData{}, fmt.Errorf("create parachain merkle proof: %w", err)
+		return MerkleProofData{}, fmt.Errorf("create solochain messages merkle proof: %w", err)
 	}
 
 	return MerkleProofData{

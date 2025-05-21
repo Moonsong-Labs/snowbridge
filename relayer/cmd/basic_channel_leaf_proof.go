@@ -17,7 +17,7 @@ func basicChannelLeafProofCmd() *cobra.Command {
 		RunE:  BasicChannelLeafProofFn,
 	}
 
-	cmd.Flags().StringP("url", "u", "", "Parachain URL")
+	cmd.Flags().StringP("url", "u", "", "Solochain URL")
 	cmd.MarkFlagRequired("url")
 
 	cmd.Flags().BytesHex(

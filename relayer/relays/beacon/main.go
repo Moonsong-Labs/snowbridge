@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/snowfork/go-substrate-rpc-client/v4/signature"
-	"github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/snowfork/snowbridge/relayer/chain/solochain"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/config"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/header"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/header/syncer/api"
@@ -35,19 +35,19 @@ func (r *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
 	specSettings := r.config.Source.Beacon.Spec
 	log.WithField("spec", specSettings).Info("spec settings")
 
-	paraconn := parachain.NewConnection(r.config.Sink.Parachain.Endpoint, r.keypair)
+	soloconn := solochain.NewConnection(r.config.Sink.Solochain.Endpoint, r.keypair)
 
-	err := paraconn.ConnectWithHeartBeat(ctx, 30*time.Second)
+	err := soloconn.ConnectWithHeartBeat(ctx, 30*time.Second)
 	if err != nil {
 		return err
 	}
 
-	writer := parachain.NewParachainWriter(
-		paraconn,
-		r.config.Sink.Parachain.MaxWatchedExtrinsics,
+	writer := solochain.NewSolochainWriter(
+		soloconn,
+		r.config.Sink.Solochain.MaxWatchedExtrinsics,
 	)
 
-	p := protocol.New(specSettings, r.config.Sink.Parachain.HeaderRedundancy)
+	p := protocol.New(specSettings, r.config.Sink.Solochain.HeaderRedundancy)
 
 	err = writer.Start(ctx, eg)
 	if err != nil {

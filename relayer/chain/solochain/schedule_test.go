@@ -1,4 +1,4 @@
-package parachain_test
+package solochain_test
 
 import (
 	"fmt"

@@ -1,7 +1,7 @@
 // Copyright 2020 Snowfork
 // SPDX-License-Identifier: LGPL-3.0-only
 
-package parachain
+package solochain
 
 import (
 	"context"
@@ -146,6 +146,73 @@ func (conn *Connection) GetMMRRootHash(blockHash types.Hash) (types.Hash, error)
 		return types.Hash{}, fmt.Errorf("Mmr.RootHash storage item does not exist")
 	}
 	return mmrRootHash, nil
+}
+
+func (conn *Connection) FetchMMRLeafCount(relayBlockhash types.Hash) (uint64, error) {
+	mmrLeafCountKey, err := types.CreateStorageKey(conn.Metadata(), "Mmr", "NumberOfLeaves", nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	var mmrLeafCount uint64
+
+	ok, err := conn.API().RPC.State.GetStorage(mmrLeafCountKey, &mmrLeafCount, relayBlockhash)
+	if err != nil {
+		return 0, err
+	}
+
+	if !ok {
+		return 0, fmt.Errorf("MMR Leaf Count Not Found")
+	}
+
+	log.WithFields(log.Fields{
+		"mmrLeafCount": mmrLeafCount,
+	}).Info("MMR Leaf Count")
+
+	return mmrLeafCount, nil
+}
+
+func (conn *Connection) fetchKeys(keyPrefix []byte, blockHash types.Hash) ([]types.StorageKey, error) {
+	const pageSize = 200
+	var startKey *types.StorageKey
+
+	if pageSize < 1 {
+		return nil, fmt.Errorf("page size cannot be zero")
+	}
+
+	var results []types.StorageKey
+	log.WithFields(log.Fields{
+		"keyPrefix": keyPrefix,
+		"blockHash": blockHash.Hex(),
+		"pageSize":  pageSize,
+	}).Trace("Fetching paged keys.")
+
+	pageIndex := 0
+	for {
+		response, err := conn.API().RPC.State.GetKeysPaged(keyPrefix, pageSize, startKey, blockHash)
+		if err != nil {
+			return nil, err
+		}
+
+		log.WithFields(log.Fields{
+			"keysInPage": len(response),
+			"pageIndex":  pageIndex,
+		}).Trace("Fetched a page of keys.")
+
+		results = append(results, response...)
+		if uint32(len(response)) < pageSize {
+			break
+		} else {
+			startKey = &response[len(response)-1]
+			pageIndex++
+		}
+	}
+
+	log.WithFields(log.Fields{
+		"totalNumKeys":  len(results),
+		"totalNumPages": pageIndex + 1,
+	}).Trace("Fetching of paged keys complete.")
+
+	return results, nil
 }
 
 func (co *Connection) GenerateProofForBlock(
