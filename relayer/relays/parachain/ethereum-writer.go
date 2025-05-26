@@ -1,4 +1,4 @@
-package parachain
+package solochain
 
 import (
 	"context"
@@ -159,9 +159,9 @@ func (wr *EthereumWriter) WriteChannel(
 			"MMRRoot":              proof.MMRRootHash.Hex(),
 			"MMRLeafHash":          Hex(hasher.Hash(mmrLeafEncoded)),
 			"merkleProofData":      proof.MerkleProofData,
-			"parachainBlockNumber": proof.Header.Number,
+			"solochainBlockNumber": proof.Header.Number,
 			"beefyBlock":           proof.MMRProof.Blockhash.Hex(),
-			"header":               proof.Header,
+			"solochainHeader":      proof.Header,
 		}).
 		Info("Sent transaction Gateway.submit")
 

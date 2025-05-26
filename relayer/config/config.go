@@ -10,6 +10,10 @@ type ParachainConfig struct {
 	Endpoint string `mapstructure:"endpoint"`
 }
 
+type SolochainConfig struct {
+	Endpoint string `mapstructure:"endpoint"`
+}
+
 type EthereumConfig struct {
 	Endpoint  string `mapstructure:"endpoint"`
 	GasFeeCap uint64 `mapstructure:"gas-fee-cap"`
@@ -20,6 +24,13 @@ type EthereumConfig struct {
 type OFACConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
 	ApiKey  string `mapstructure:"apiKey"`
+}
+
+func (s SolochainConfig) Validate() error {
+	if s.Endpoint == "" {
+		return errors.New("[endpoint] is not set")
+	}
+	return nil
 }
 
 func (p ParachainConfig) Validate() error {

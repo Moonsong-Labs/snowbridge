@@ -22,7 +22,7 @@
       "nextAuthoritySetID": 12768,
       "nextAuthoritySetLen": 111,
       "nextAuthoritySetRoot": "0x03aff613b52959e3045f7ccbdef689259ee659ed2907cc28eb24fcafa65e281c",
-      "parachainHeadsRoot": "0x7b7b3f99df2902994079f8ad596caa2c769c430372e88a422d1ec02ffe410b08",
+      "beefyExtraField": "0x7b7b3f99df2902994079f8ad596caa2c769c430372e88a422d1ec02ffe410b08",
       "parentHash": "0x76341b03dc3c22781e25d55c831beae4e8473cc58d65713674ebf6152b6076e7",
       "parentNumber": 7440388,
       "version": 0

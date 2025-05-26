@@ -1,4 +1,4 @@
-package parachain
+package solochain
 
 import (
 	"fmt"
