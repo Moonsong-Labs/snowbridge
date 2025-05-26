@@ -1,4 +1,4 @@
-package solochain
+package parachain
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
-	solo "github.com/snowfork/snowbridge/relayer/chain/solochain"
-	"github.com/snowfork/snowbridge/relayer/relays/solochain"
+	solo "github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/snowfork/snowbridge/relayer/relays/parachain"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"

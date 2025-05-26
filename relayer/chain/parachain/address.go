@@ -1,4 +1,4 @@
-package solochain
+package parachain
 
 import (
 	"encoding/hex"

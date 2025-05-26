@@ -1,4 +1,4 @@
-package solochain
+package parachain
 
 import (
 	assert "github.com/stretchr/testify/require"

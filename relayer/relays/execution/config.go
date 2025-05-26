@@ -46,7 +46,7 @@ type ContractsConfig struct {
 }
 
 type SinkConfig struct {
-	Solochain  beaconconf.SolochainConfig `mapstructure:"solochain"`
+	Parachain  beaconconf.ParachainConfig `mapstructure:"parachain"`
 	SS58Prefix uint8                      `mapstructure:"ss58Prefix"`
 }
 
@@ -57,9 +57,9 @@ func (c Config) Validate() error {
 	if err != nil {
 		return fmt.Errorf("beacon config validation: %w", err)
 	}
-	err = c.Sink.Solochain.Validate()
+	err = c.Sink.Parachain.Validate()
 	if err != nil {
-		return fmt.Errorf("solochain config validation: %w", err)
+		return fmt.Errorf("parachain config validation: %w", err)
 	}
 	if c.Source.Contracts.Gateway == "" {
 		return fmt.Errorf("source setting [gateway] is not set")

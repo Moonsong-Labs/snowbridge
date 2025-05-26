@@ -13,7 +13,8 @@ type Config struct {
 }
 
 type SourceConfig struct {
-	Solochain config.SolochainConfig `mapstructure:"solochain"`
+	Polkadot  config.PolkadotConfig  `mapstructure:"polkadot"`
+	BridgeHub config.ParachainConfig `mapstructure:"bridge-hub"`
 }
 
 type SinkConfig struct {
@@ -37,7 +38,7 @@ type OnDemandSyncConfig struct {
 }
 
 func (c Config) Validate() error {
-	err := c.Source.Solochain.Validate()
+	err := c.Source.Polkadot.Validate()
 	if err != nil {
 		return fmt.Errorf("source polkadot config: %w", err)
 	}

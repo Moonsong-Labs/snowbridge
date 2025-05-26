@@ -10,10 +10,10 @@ import (
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/snowfork/snowbridge/relayer/chain/solochain"
+	"github.com/snowfork/snowbridge/relayer/chain/parachain"
 )
 
-type TestProof solochain.ProofData
+type TestProof parachain.ProofData
 
 // For interface gethTrie.KeyValueReader
 func (tp *TestProof) Get(key []byte) ([]byte, error) {

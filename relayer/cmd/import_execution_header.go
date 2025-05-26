@@ -5,7 +5,7 @@ import (
 	"io/ioutil"
 	"strings"
 
-	"github.com/snowfork/snowbridge/relayer/chain/solochain"
+	"github.com/snowfork/snowbridge/relayer/chain/parachain"
 	"github.com/snowfork/snowbridge/relayer/crypto/sr25519"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/cache"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/config"
@@ -41,8 +41,8 @@ func importExecutionHeaderCmd() *cobra.Command {
 		return nil
 	}
 
-	cmd.Flags().String("solochain-endpoint", "", "Solochain API URL")
-	err = cmd.MarkFlagRequired("solochain-endpoint")
+	cmd.Flags().String("parachain-endpoint", "", "Parachain API URL")
+	err = cmd.MarkFlagRequired("parachain-endpoint")
 	if err != nil {
 		return nil
 	}
@@ -74,7 +74,7 @@ func importExecutionHeaderFn(cmd *cobra.Command, _ []string) error {
 
 		eg, ctx := errgroup.WithContext(ctx)
 
-		solochainEndpoint, _ := cmd.Flags().GetString("solochain-endpoint")
+		parachainEndpoint, _ := cmd.Flags().GetString("parachain-endpoint")
 		privateKeyFile, _ := cmd.Flags().GetString("private-key-file")
 		lodestarEndpoint, _ := cmd.Flags().GetString("lodestar-endpoint")
 		beaconHeader, _ := cmd.Flags().GetString("beacon-header")
@@ -95,21 +95,21 @@ func importExecutionHeaderFn(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("get keypair from file: %w", err)
 		}
 
-		soloconn := solochain.NewConnection(solochainEndpoint, keypair.AsKeyringPair())
-		err = soloconn.Connect(ctx)
+		paraconn := parachain.NewConnection(parachainEndpoint, keypair.AsKeyringPair())
+		err = paraconn.Connect(ctx)
 		if err != nil {
-			return fmt.Errorf("connect to solochain: %w", err)
+			return fmt.Errorf("connect to parachain: %w", err)
 		}
 
-		writer := solochain.NewSolochainWriter(soloconn, 8)
+		writer := parachain.NewParachainWriter(paraconn, 8)
 		err = writer.Start(ctx, eg)
 		if err != nil {
-			return fmt.Errorf("start solochain conn: %w", err)
+			return fmt.Errorf("start parachain conn: %w", err)
 		}
 
 		log.WithField("hash", beaconHeader).Info("will be syncing execution header for beacon hash")
 
-		p := protocol.New(conf.Source.Beacon.Spec, conf.Sink.Solochain.HeaderRedundancy)
+		p := protocol.New(conf.Source.Beacon.Spec, conf.Sink.Parachain.HeaderRedundancy)
 		store := store.New(conf.Source.Beacon.DataStore.Location, conf.Source.Beacon.DataStore.MaxEntries, *p)
 		store.Connect()
 		defer store.Close()
@@ -121,9 +121,9 @@ func importExecutionHeaderFn(cmd *cobra.Command, _ []string) error {
 
 		finalizedUpdate, err := syncer.GetFinalizedUpdate()
 
-		err = writer.WriteToSolochainAndWatch(ctx, "EthereumBeaconClient.import_finalized_header", finalizedUpdate.Payload)
+		err = writer.WriteToParachainAndWatch(ctx, "EthereumBeaconClient.import_finalized_header", finalizedUpdate.Payload)
 		if err != nil {
-			return fmt.Errorf("write to solochain: %w", err)
+			return fmt.Errorf("write to parachain: %w", err)
 		}
 		log.Info("imported finalized header")
 
@@ -139,9 +139,9 @@ func importExecutionHeaderFn(cmd *cobra.Command, _ []string) error {
 		}
 		log.WithField("slot", update.Header.Slot).Info("found block at slot")
 
-		err = writer.WriteToSolochainAndWatch(ctx, "EthereumBeaconClient.import_execution_header", update)
+		err = writer.WriteToParachainAndWatch(ctx, "EthereumBeaconClient.import_execution_header", update)
 		if err != nil {
-			return fmt.Errorf("write to solochain: %w", err)
+			return fmt.Errorf("write to parachain: %w", err)
 		}
 		log.Info("imported execution header")
 

@@ -39,11 +39,11 @@ type BeaconConfig struct {
 }
 
 type SinkConfig struct {
-	Solochain          SolochainConfig `mapstructure:"solochain"`
+	Parachain          ParachainConfig `mapstructure:"parachain"`
 	UpdateSlotInterval uint64          `mapstructure:"updateSlotInterval"`
 }
 
-type SolochainConfig struct {
+type ParachainConfig struct {
 	Endpoint             string `mapstructure:"endpoint"`
 	MaxWatchedExtrinsics int64  `mapstructure:"maxWatchedExtrinsics"`
 	// The max number of header in the FinalizedBeaconStateBuffer on-chain.
@@ -56,12 +56,12 @@ func (c Config) Validate() error {
 	if err != nil {
 		return fmt.Errorf("source beacon config: %w", err)
 	}
-	err = c.Sink.Solochain.Validate()
+	err = c.Sink.Parachain.Validate()
 	if err != nil {
-		return fmt.Errorf("sink solochain config: %w", err)
+		return fmt.Errorf("sink parachain config: %w", err)
 	}
 	if c.Sink.UpdateSlotInterval == 0 {
-		return errors.New("solochain [updateSlotInterval] config is not set")
+		return errors.New("parachain [updateSlotInterval] config is not set")
 	}
 	return nil
 }
@@ -94,7 +94,7 @@ func (b BeaconConfig) Validate() error {
 	return nil
 }
 
-func (p SolochainConfig) Validate() error {
+func (p ParachainConfig) Validate() error {
 	if p.Endpoint == "" {
 		return errors.New("[endpoint] is not set")
 	}

@@ -18,7 +18,7 @@ import (
 	"github.com/snowfork/go-substrate-rpc-client/v4/signature"
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
-	"github.com/snowfork/snowbridge/relayer/chain/solochain"
+	"github.com/snowfork/snowbridge/relayer/chain/parachain"
 	"github.com/snowfork/snowbridge/relayer/contracts"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/header"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/header/syncer/api"
@@ -31,11 +31,11 @@ import (
 type Relay struct {
 	config          *Config
 	keypair         *signature.KeyringPair
-	soloconn        *solochain.Connection
+	paraconn        *parachain.Connection
 	ethconn         *ethereum.Connection
 	gatewayContract *contracts.Gateway
 	beaconHeader    *header.Header
-	writer          *solochain.SolochainWriter
+	writer          *parachain.ParachainWriter
 	headerCache     *ethereum.HeaderCache
 	ofac            *ofac.OFAC
 	chainID         *big.Int
@@ -52,14 +52,14 @@ func NewRelay(
 }
 
 func (r *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
-	soloconn := solochain.NewConnection(r.config.Sink.Solochain.Endpoint, r.keypair)
+	paraconn := parachain.NewConnection(r.config.Sink.Parachain.Endpoint, r.keypair)
 	ethconn := ethereum.NewConnection(&r.config.Source.Ethereum, nil)
 
-	err := soloconn.ConnectWithHeartBeat(ctx, 30*time.Second)
+	err := paraconn.ConnectWithHeartBeat(ctx, 30*time.Second)
 	if err != nil {
 		return err
 	}
-	r.soloconn = soloconn
+	r.paraconn = paraconn
 
 	err = ethconn.Connect(ctx)
 	if err != nil {
@@ -67,9 +67,9 @@ func (r *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
 	}
 	r.ethconn = ethconn
 
-	r.writer = solochain.NewSolochainWriter(
-		soloconn,
-		r.config.Sink.Solochain.MaxWatchedExtrinsics,
+	r.writer = parachain.NewParachainWriter(
+		paraconn,
+		r.config.Sink.Parachain.MaxWatchedExtrinsics,
 	)
 
 	err = r.writer.Start(ctx, eg)
@@ -92,7 +92,7 @@ func (r *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
 	}
 	r.gatewayContract = contract
 
-	p := protocol.New(r.config.Source.Beacon.Spec, r.config.Sink.Solochain.HeaderRedundancy)
+	p := protocol.New(r.config.Source.Beacon.Spec, r.config.Sink.Parachain.HeaderRedundancy)
 
 	r.ofac = ofac.New(r.config.OFAC.Enabled, r.config.OFAC.ApiKey)
 
@@ -134,13 +134,13 @@ func (r *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
 				return err
 			}
 
-			soloNonces, err := r.fetchUnprocessedSolochainNonces(ethNonce)
+			paraNonces, err := r.fetchUnprocessedParachainNonces(ethNonce)
 			if err != nil {
 				return err
 			}
 
 			log.WithFields(log.Fields{
-				"soloNonce":           soloNonces,
+				"paraNonces":          paraNonces,
 				"ethNonce":            ethNonce,
 				"instantVerification": r.config.InstantVerification,
 			}).Info("Polled Nonces")
@@ -154,18 +154,18 @@ func (r *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
 				"blockNumber": blockNumber,
 			}).Info("block number is")
 
-			for _, soloNonce := range soloNonces {
+			for _, paraNonce := range paraNonces {
 				log.WithFields(log.Fields{
-					"nonce": soloNonce,
+					"nonce": paraNonce,
 				}).Info("Finding events for nonce")
-				events, err := r.findEvents(ctx, blockNumber, soloNonce)
+				events, err := r.findEvents(ctx, blockNumber, paraNonce)
 				if err != nil {
 					return fmt.Errorf("find events: %w", err)
 				}
 
 				log.WithFields(log.Fields{
 					"events":    events,
-					"soloNonce": soloNonce,
+					"paraNonce": paraNonce,
 				}).Info("Found events for nonce")
 
 				for _, ev := range events {
@@ -182,7 +182,7 @@ func (r *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
 	}
 }
 
-func (r *Relay) writeToSolochain(ctx context.Context, proof scale.ProofPayload, inboundMsg *solochain.Message) error {
+func (r *Relay) writeToParachain(ctx context.Context, proof scale.ProofPayload, inboundMsg *parachain.Message) error {
 	inboundMsg.Proof.ExecutionProof = proof.HeaderPayload
 
 	log.WithFields(logrus.Fields{
@@ -192,7 +192,7 @@ func (r *Relay) writeToSolochain(ctx context.Context, proof scale.ProofPayload, 
 
 	// There is already a valid finalized header on-chain that can prove the message
 	if proof.FinalizedPayload == nil {
-		err := r.writer.WriteToSolochainAndWatch(ctx, "EthereumInboundQueueV2.submit", inboundMsg)
+		err := r.writer.WriteToParachainAndWatch(ctx, "EthereumInboundQueueV2.submit", inboundMsg)
 		if err != nil {
 			return fmt.Errorf("submit message to inbound queue: %w", err)
 		}
@@ -217,14 +217,14 @@ func (r *Relay) writeToSolochain(ctx context.Context, proof scale.ProofPayload, 
 	return nil
 }
 
-func (r *Relay) fetchUnprocessedSolochainNonces(latest uint64) ([]uint64, error) {
+func (r *Relay) fetchUnprocessedParachainNonces(latest uint64) ([]uint64, error) {
 	unprocessedNonces := []uint64{}
 	latestBucket := latest / 128
 
 	for b := uint64(0); b <= latestBucket; b++ {
 		encodedBucket, err := types.EncodeToBytes(types.NewU128(*big.NewInt(int64(b))))
 		bucketKey, _ := types.CreateStorageKey(
-			r.soloconn.Metadata(),
+			r.paraconn.Metadata(),
 			"EthereumInboundQueueV2",
 			"NonceBitmap",
 			encodedBucket,
@@ -232,7 +232,7 @@ func (r *Relay) fetchUnprocessedSolochainNonces(latest uint64) ([]uint64, error)
 		)
 
 		var value types.U128
-		ok, err := r.soloconn.API().RPC.State.GetStorageLatest(bucketKey, &value)
+		ok, err := r.paraconn.API().RPC.State.GetStorageLatest(bucketKey, &value)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read bucket %d: %w", b, err)
 		}
@@ -253,22 +253,22 @@ func (r *Relay) fetchUnprocessedSolochainNonces(latest uint64) ([]uint64, error)
 	return unprocessedNonces, nil
 }
 
-func (r *Relay) isSolochainNonceSet(index uint64) (bool, error) {
+func (r *Relay) isParachainNonceSet(index uint64) (bool, error) {
 	log.WithFields(logrus.Fields{
 		"index": index,
-	}).Debug("is solochain nonce set")
+	}).Debug("is parachain nonce set")
 	// Calculate the bucket and bit position
 	bucket := index / 128
 	bitPosition := index % 128
 
 	encodedBucket, err := types.EncodeToBytes(types.NewU128(*big.NewInt(int64(bucket))))
-	bucketKey, err := types.CreateStorageKey(r.soloconn.Metadata(), "EthereumInboundQueueV2", "NonceBitmap", encodedBucket)
+	bucketKey, err := types.CreateStorageKey(r.paraconn.Metadata(), "EthereumInboundQueueV2", "NonceBitmap", encodedBucket)
 	if err != nil {
 		return false, fmt.Errorf("create storage key for EthereumInboundQueueV2.NonceBitmap: %w", err)
 	}
 
 	var bucketValue types.U128
-	ok, err := r.soloconn.API().RPC.State.GetStorageLatest(bucketKey, &bucketValue)
+	ok, err := r.paraconn.API().RPC.State.GetStorageLatest(bucketKey, &bucketValue)
 
 	if err != nil {
 		return false, fmt.Errorf("fetch storage EthereumInboundQueueV2.NonceBitmap keys: %w", err)
@@ -420,7 +420,7 @@ func (r *Relay) makeInboundMessage(
 	ctx context.Context,
 	headerCache *ethereum.HeaderCache,
 	event *contracts.GatewayOutboundMessageAccepted,
-) (*solochain.Message, error) {
+) (*parachain.Message, error) {
 	receiptTrie, err := headerCache.GetReceiptTrie(ctx, event.Raw.BlockHash)
 	if err != nil {
 		log.WithFields(logrus.Fields{
@@ -548,12 +548,12 @@ func (r *Relay) doSubmit(ctx context.Context, ev *contracts.GatewayOutboundMessa
 		return nil
 	}
 
-	err = r.writeToSolochain(ctx, proof, inboundMsg)
+	err = r.writeToParachain(ctx, proof, inboundMsg)
 	if err != nil {
-		return fmt.Errorf("write to solochain: %w", err)
+		return fmt.Errorf("write to parachain: %w", err)
 	}
 
-	ok, err := r.isSolochainNonceSet(ev.Nonce)
+	ok, err := r.isParachainNonceSet(ev.Nonce)
 	if !ok {
 		return fmt.Errorf("inbound message fail to execute")
 	}
@@ -564,14 +564,14 @@ func (r *Relay) doSubmit(ctx context.Context, ev *contracts.GatewayOutboundMessa
 
 // isMessageProcessed checks if the provided event nonce has already been processed on-chain.
 func (r *Relay) isMessageProcessed(eventNonce uint64) (bool, error) {
-	solochainNonces, err := r.fetchUnprocessedSolochainNonces(eventNonce)
+	paraNonces, err := r.fetchUnprocessedParachainNonces(eventNonce)
 	if err != nil {
-		return false, fmt.Errorf("fetch latest solochain nonce: %w", err)
+		return false, fmt.Errorf("fetch latest parachain nonce: %w", err)
 	}
 	// Check the nonce again in case another relayer processed the message while this relayer downloading beacon state
 
-	for _, solochainNonce := range solochainNonces {
-		if eventNonce == solochainNonce {
+	for _, paraNonce := range paraNonces {
+		if eventNonce == paraNonce {
 			return false, nil
 		}
 	}
