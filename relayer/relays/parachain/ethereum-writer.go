@@ -158,7 +158,7 @@ func (wr *EthereumWriter) WriteChannel(
 			"commitmentHash":       commitmentProof.Proof.Root.Hex(),
 			"MMRRoot":              proof.MMRRootHash.Hex(),
 			"MMRLeafHash":          Hex(hasher.Hash(mmrLeafEncoded)),
-			"MerkleProofData":      proof.MerkleProofData,
+			"merkleProofData":      proof.MerkleProofData,
 			"solochainBlockNumber": proof.Header.Number,
 			"beefyBlock":           proof.MMRProof.Blockhash.Hex(),
 			"solochainHeader":      proof.Header,

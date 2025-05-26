@@ -135,8 +135,8 @@ func (co *Connection) GenerateProofForBlock(
 	log.WithFields(log.Fields{
 		"BlockHash": proofResponse.BlockHash.Hex(),
 		"Leaf": log.Fields{
-			"ParentNumber":    proofResponse.Leaf.ParentNumberAndHash.ParentNumber,
-			"ParentHash":      proofResponse.Leaf.ParentNumberAndHash.Hash.Hex(),
+			"ParentNumber":   proofResponse.Leaf.ParentNumberAndHash.ParentNumber,
+			"ParentHash":     proofResponse.Leaf.ParentNumberAndHash.Hash.Hex(),
 			"BeefyExtraField": proofResponse.Leaf.BeefyExtraField.Hex(),
 			"NextAuthoritySet": log.Fields{
 				"Id":   proofResponse.Leaf.BeefyNextAuthoritySet.ID,

@@ -283,7 +283,7 @@ func (li *BeefyListener) generateAndValidateMessagesMerkleProof(input *ProofInpu
 
 func (li *BeefyListener) waitAndSend(ctx context.Context, task *Task, waitingPeriod uint64) error {
 	solochainNonce := (*task.MessageProofs)[0].Message.Nonce
-	log.Debugf("Waiting for solochain message (nonce %d) to be potentially picked up by another relayer", solochainNonce)
+	log.Infof("Waiting for solochain message (nonce %d) to be potentially picked up by another relayer", solochainNonce)
 	var cnt uint64
 	var err error
 	for {
@@ -292,7 +292,7 @@ func (li *BeefyListener) waitAndSend(ctx context.Context, task *Task, waitingPer
 			return fmt.Errorf("Checking if solochain nonce %d is relayed: %w", solochainNonce, err)
 		}
 		if isRelayed {
-			log.Debugf("Solochain message (nonce %d) picked up by another relayer, skipping", solochainNonce)
+			log.Infof("Solochain message (nonce %d) picked up by another relayer, skipping", solochainNonce)
 			return nil
 		}
 		if cnt == waitingPeriod {
@@ -301,7 +301,7 @@ func (li *BeefyListener) waitAndSend(ctx context.Context, task *Task, waitingPer
 		time.Sleep(time.Duration(li.scheduleConfig.SleepInterval) * time.Second)
 		cnt++
 	}
-	log.Debugf("Solochain message (nonce %d) not picked up by others, proceeding to submit", solochainNonce)
+	log.Infof("Solochain message (nonce %d) not picked up by others, proceeding to submit", solochainNonce)
 
 	task.ProofOutput, err = li.generateProof(ctx, task.ProofInput, task.Header)
 	if err != nil {
