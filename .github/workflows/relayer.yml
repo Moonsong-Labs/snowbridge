@@ -122,4 +122,4 @@ jobs:
         with:
           context: ./relayer
           push: true
-          tags: moonsonglabs/snowbridge-relayer:${{ steps.docker_tag_value.outputs.value }}
+          tags: moonsonglabs/snowbridge-relay:${{ steps.docker_tag_value.outputs.value }}
