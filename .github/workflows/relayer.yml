@@ -69,9 +69,9 @@ jobs:
       - name: Make relayer binary executable
         run: chmod +x relayer/build/snowbridge-relay
 
-      - name: Run build-local-docker.sh
+      - name: Build Docker image using pre-built binary
         working-directory: relayer
-        run: ./build-local-docker.sh
+        run: docker build -f Dockerfile.prebuilt -t snowbridge-relay:local .
 
       - name: Test Docker image with --help
         run: docker run --rm snowbridge-relay:local --help
@@ -121,5 +121,6 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./relayer
+          file: ./relayer/Dockerfile.prebuilt
           push: true
-          tags: moonsonglabs/snowbridge-relayer:${{ steps.docker_tag_value.outputs.value }}
+          tags: moonsonglabs/snowbridge-relay:${{ steps.docker_tag_value.outputs.value }}
