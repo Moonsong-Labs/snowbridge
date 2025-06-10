@@ -1,6 +1,8 @@
 FROM ghcr.io/foundry-rs/foundry AS contracts
 WORKDIR /opt/contracts
 COPY contracts .
+RUN forge install --no-git
+RUN forge clean
 RUN forge build
 
 FROM golang:1.23 AS builder
