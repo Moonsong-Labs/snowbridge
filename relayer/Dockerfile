@@ -1,9 +1,17 @@
 FROM ghcr.io/foundry-rs/foundry AS contracts
 WORKDIR /opt/contracts
-COPY contracts .
-RUN forge install --no-git
-RUN forge clean
-RUN forge build
+# Copy specific files and directories, excluding lib
+COPY contracts/src ./src
+COPY contracts/test ./test
+COPY contracts/scripts ./scripts
+COPY contracts/foundry.toml ./foundry.toml
+COPY contracts/remappings.txt ./remappings.txt
+
+# Install dependencies fresh
+RUN forge install --no-git foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts dapphub/ds-test Snowfork/canonical-weth PaulRBerg/prb-math
+
+# Clean and build
+RUN forge clean && forge build
 
 FROM golang:1.23 AS builder
 WORKDIR /opt/relayer
