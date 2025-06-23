@@ -1,0 +1,5 @@
+FROM ubuntu:22.04
+COPY build/snowbridge-relay /usr/local/bin/
+RUN chmod +x /usr/local/bin/snowbridge-relay
+VOLUME ["/config"]
+ENTRYPOINT ["/usr/local/bin/snowbridge-relay"] 

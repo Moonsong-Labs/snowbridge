@@ -5,7 +5,7 @@ source ../web/packages/test/scripts/set-env.sh
 
 build_image()
 {
-    docker build -f Dockerfile -t snowbridge-relay:local .
+    docker build -f Dockerfile.prebuilt -t snowbridge-relay:local .
 }
 
 if [ -z "${from_start_services:-}" ]; then
