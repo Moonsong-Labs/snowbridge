@@ -60,7 +60,7 @@ func (s *Scanner) findTasks(
 	log.Debugf("findTasks: Fetching nonces from PendingOrders at blockhash '%v'", solochainBlockHash.Hex())
 
 	// Fetch PendingOrders storage in the solochain outbound queue at the corresponding block
-	storageKeyPrefix := types.NewStorageKey(types.CreateStorageKeyPrefix("OutboundQueueV2", "PendingOrders"))
+	storageKeyPrefix := types.NewStorageKey(types.CreateStorageKeyPrefix("EthereumOutboundQueueV2", "PendingOrders"))
 	keys, err := s.soloConn.API().RPC.State.GetKeys(storageKeyPrefix, solochainBlockHash)
 	if err != nil {
 		return nil, fmt.Errorf("Fetching nonces from PendingOrders at blockhash '%v': %w", solochainBlockHash.Hex(), err)
@@ -161,10 +161,10 @@ func (s *Scanner) filterTasks(
 			continue
 		}
 
-		log.Debugf("filterTasks: Extracted commitment hash %s for block %d (order Nonce %d). Fetching messages from OutboundQueueV2 pallet", commitmentHash.Hex(), orderBlockNumber, order.Nonce)
+		log.Debugf("filterTasks: Extracted commitment hash %s for block %d (order Nonce %d). Fetching messages from EthereumOutboundQueueV2 pallet", commitmentHash.Hex(), orderBlockNumber, order.Nonce)
 
-		// Create the storage key to be able to get the messages from the OutboundQueueV2 pallet
-		messagesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "OutboundQueueV2", "Messages", nil, nil)
+		// Create the storage key to be able to get the messages from the EthereumOutboundQueueV2 pallet
+		messagesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "EthereumOutboundQueueV2", "Messages", nil, nil)
 		if err != nil {
 			return nil, fmt.Errorf("filterTasks: Error creating storage key for Messages (order Nonce %d): %w", order.Nonce, err)
 		}
@@ -176,7 +176,7 @@ func (s *Scanner) filterTasks(
 			return nil, fmt.Errorf("filterTasks: Error fetching committed messages for block %s (order Nonce %d): %w", blockHash.Hex(), order.Nonce, err)
 		}
 		if rawMessages == nil || len(*rawMessages) == 0 {
-			log.Warnf("filterTasks: No messages found in OutboundQueueV2.Messages for solochain block %s (order Nonce %d), skipping order", blockHash.Hex(), order.Nonce)
+			log.Warnf("filterTasks: No messages found in EthereumOutboundQueueV2.Messages for solochain block %s (order Nonce %d), skipping order", blockHash.Hex(), order.Nonce)
 			continue
 		}
 
@@ -257,10 +257,10 @@ func (s *Scanner) gatherProofInputs(
 			return fmt.Errorf("Failed to get block hash for message block %d: %v", solochainBlockNumber, err)
 		}
 
-		// Create the storage key to be able to get the messages from the OutboundQueueV2 pallet
-		messagesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "OutboundQueueV2", "Messages", nil, nil)
+		// Create the storage key to be able to get the messages from the EthereumOutboundQueueV2 pallet
+		messagesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "EthereumOutboundQueueV2", "Messages", nil, nil)
 		if err != nil {
-			return fmt.Errorf("Creating storage key for Messages of OutboundQueueV2: %w", err)
+			return fmt.Errorf("Creating storage key for Messages of EthereumOutboundQueueV2: %w", err)
 		}
 
 		// Get the messages in the corresponding block
@@ -270,7 +270,7 @@ func (s *Scanner) gatherProofInputs(
 			return fmt.Errorf("Fetching committed messages for block %v: %w", solochainBlockHash.Hex(), err)
 		}
 		if rawMessages == nil || len(*rawMessages) == 0 {
-			return fmt.Errorf("No messages found in OutboundQueueV2.Messages for solochain block %v", solochainBlockHash.Hex())
+			return fmt.Errorf("No messages found in EthereumOutboundQueueV2.Messages for solochain block %v", solochainBlockHash.Hex())
 		}
 
 		// Decode the messages
@@ -406,7 +406,7 @@ func (s *Scanner) findOrderUndelivered(
 	ctx context.Context,
 ) ([]*PendingOrder, error) {
 	// Get all pending orders at the latest block
-	storageKeyPrefix := types.NewStorageKey(types.CreateStorageKeyPrefix("OutboundQueueV2", "PendingOrders"))
+	storageKeyPrefix := types.NewStorageKey(types.CreateStorageKeyPrefix("EthereumOutboundQueueV2", "PendingOrders"))
 	keys, err := s.soloConn.API().RPC.State.GetKeysLatest(storageKeyPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("Fetching nonces from PendingOrders for undelivered check: %w", err)
