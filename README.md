@@ -15,6 +15,10 @@ This is a fork of the Snowbridge project (docs below).
 
 Snowbridge is a trustless bridge between Polkadot and Ethereum. For documentation, visit https://docs.snowbridge.network.
 
+## Bug Bounty
+
+Found a security issue in Snowbridge? Please view our [bug bounty programme](https://docs.snowbridge.network/security/bug-bounty) to submit a finding.
+
 ## Components
 
 The Snowbridge project lives in two repositories:
