@@ -1,4 +1,4 @@
-package parachain
+package solochain
 
 import (
 	"errors"
@@ -17,8 +17,7 @@ type Config struct {
 }
 
 type SourceConfig struct {
-	Polkadot  config.PolkadotConfig   `mapstructure:"polkadot"`
-	Parachain config.ParachainConfig  `mapstructure:"parachain"`
+	Solochain config.SolochainConfig  `mapstructure:"solochain"`
 	Ethereum  config.EthereumConfig   `mapstructure:"ethereum"`
 	Contracts SourceContractsConfig   `mapstructure:"contracts"`
 	Beacon    beaconconf.BeaconConfig `mapstructure:"beacon"`
@@ -61,13 +60,9 @@ type ChannelID [32]byte
 
 func (c Config) Validate() error {
 	// Source
-	err := c.Source.Polkadot.Validate()
+	err := c.Source.Solochain.Validate()
 	if err != nil {
-		return fmt.Errorf("source polkadot config: %w", err)
-	}
-	err = c.Source.Parachain.Validate()
-	if err != nil {
-		return fmt.Errorf("source parachain config: %w", err)
+		return fmt.Errorf("source solochain config: %w", err)
 	}
 	err = c.Source.Ethereum.Validate()
 	if err != nil {

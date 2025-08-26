@@ -443,10 +443,12 @@ func (h *Header) getHeaderUpdateBySlot(slot uint64) (scale.HeaderUpdatePayload, 
 }
 
 func (h *Header) FetchExecutionProof(blockRoot common.Hash, instantVerification bool) (scale.ProofPayload, error) {
+
 	header, err := h.syncer.Client.GetHeaderByBlockRoot(blockRoot)
 	if err != nil {
 		return scale.ProofPayload{}, fmt.Errorf("get beacon header by blockRoot: %w", err)
 	}
+
 	lastFinalizedHeaderState, err := h.writer.GetLastFinalizedHeaderState()
 	if err != nil {
 		return scale.ProofPayload{}, fmt.Errorf("fetch last finalized header state: %w", err)
@@ -507,7 +509,6 @@ func (h *Header) FetchExecutionProof(blockRoot common.Hash, instantVerification 
 		HeaderPayload:    headerUpdate,
 		FinalizedPayload: &finalizedUpdate,
 	}, nil
-
 }
 
 func (h *Header) CheckHeaderFinalized(blockRoot common.Hash, instantVerification bool) error {

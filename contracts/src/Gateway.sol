@@ -4,8 +4,10 @@ pragma solidity 0.8.28;
 
 import {MerkleProof} from "openzeppelin/utils/cryptography/MerkleProof.sol";
 import {Verification} from "./Verification.sol";
+import {BeefyVerification} from "./BeefyVerification.sol";
 import {Initializer} from "./Initializer.sol";
 import {AgentExecutor} from "./AgentExecutor.sol";
+import {Agent} from "./Agent.sol";
 import {IGatewayBase} from "./interfaces/IGatewayBase.sol";
 import {
     OperatingMode,
@@ -83,13 +85,13 @@ contract Gateway is IGatewayBase, IGatewayV1, IGatewayV2, IInitializable, IUpgra
     }
 
     /*
-    *     _________
-    *     \_   ___ \   ____    _____    _____    ____    ____
-    *     /    \  \/  /  _ \  /     \  /     \  /  _ \  /    \
-    *     \     \____(  <_> )|  Y Y  \|  Y Y  \(  <_> )|   |  \
-    *      \______  / \____/ |__|_|  /|__|_|  / \____/ |___|  /
-    *             \/               \/       \/              \/
-    */
+     *     _____   __________ .___          ____
+     *    /  _  \  \______   \|   | ___  __/_   |
+     *   /  /_\  \  |     ___/|   | \  \/ / |   |
+     *  /    |    \ |    |    |   |  \   /  |   |
+     *  \____|__  / |____|    |___|   \_/   |___|
+     *          \/
+     */
 
     // Verify that a message commitment is considered finalized by our BEEFY light client.
     function _verifyCommitment(bytes32 commitment, Verification.Proof calldata proof, bool isV2)
@@ -106,15 +108,6 @@ contract Gateway is IGatewayBase, IGatewayV1, IGatewayV2, IInitializable, IUpgra
             isV2
         );
     }
-
-    /*
-    *     _____   __________ .___          ____
-    *    /  _  \  \______   \|   | ___  __/_   |
-    *   /  /_\  \  |     ___/|   | \  \/ / |   |
-    *  /    |    \ |    |    |   |  \   /  |   |
-    *  \____|__  / |____|    |___|   \_/   |___|
-    *          \/
-    */
 
     /**
      * APIv1 Constants
@@ -406,8 +399,8 @@ contract Gateway is IGatewayBase, IGatewayV1, IGatewayV2, IInitializable, IUpgra
 
     function v2_submit(
         InboundMessageV2 calldata message,
-        bytes32[] calldata leafProof,
-        Verification.Proof calldata headerProof,
+        bytes32[] calldata messageProof,
+        BeefyVerification.Proof calldata beefyProof,
         bytes32 rewardAddress
     ) external nonreentrant {
         CoreStorage.Layout storage $ = CoreStorage.layout();
@@ -416,16 +409,16 @@ contract Gateway is IGatewayBase, IGatewayV1, IGatewayV2, IInitializable, IUpgra
             revert IGatewayBase.InvalidNonce();
         }
 
-        bytes32 leafHash = keccak256(abi.encode(message));
-
         $.inboundNonce.set(message.nonce);
 
-        // Produce the commitment (message root) by applying the leaf proof to the message leaf
-        bytes32 commitment = MerkleProof.processProof(leafProof, leafHash);
-
-        // Verify that the commitment is included in a parachain header finalized by BEEFY.
-        if (!_verifyCommitment(commitment, headerProof, true)) {
-            revert IGatewayBase.InvalidProof();
+        // Verify the message proof in two steps:
+        // 1. Produce the commitment (message root) by applying the leaf proof to the message leaf
+        // 2. Verify that the commitment is part of an MMR leaf included in the latest finalized BEEFY MMR root
+        {
+            bytes32 commitment = _buildMessageCommitment(message, messageProof);
+            if (!_verifyBeefyProof(commitment, beefyProof)) {
+                revert InvalidProof();
+            }
         }
 
         // Dispatch the message payload. The boolean returned indicates whether all commands succeeded.
@@ -448,13 +441,13 @@ contract Gateway is IGatewayBase, IGatewayV1, IGatewayV2, IInitializable, IUpgra
 
     // See docs for `IGateway.v2_sendMessage`
     function v2_sendMessage(
-        bytes calldata xcm,
+        bytes calldata message,
         bytes[] calldata assets,
         bytes calldata claimer,
         uint128 executionFee,
         uint128 relayerFee
     ) external payable nonreentrant {
-        CallsV2.sendMessage(xcm, assets, claimer, executionFee, relayerFee);
+        CallsV2.sendMessage(message, assets, claimer, executionFee, relayerFee);
     }
 
     // See docs for `IGateway.v2_registerToken`
@@ -464,7 +457,7 @@ contract Gateway is IGatewayBase, IGatewayV1, IGatewayV2, IInitializable, IUpgra
         uint128 executionFee,
         uint128 relayerFee
     ) external payable nonreentrant {
-        require(network == uint8(Network.Polkadot), IGatewayV2.InvalidNetwork());
+        require(network == uint8(Network.Solochain), IGatewayV2.InvalidNetwork());
         CallsV2.registerToken(token, Network(network), executionFee, relayerFee);
     }
 
@@ -604,5 +597,24 @@ contract Gateway is IGatewayBase, IGatewayV1, IGatewayV2, IInitializable, IUpgra
     ///
     function initialize(bytes calldata data) external virtual {
         Initializer.initialize(data);
+    }
+
+    function _buildMessageCommitment(InboundMessageV2 calldata message, bytes32[] calldata proof)
+        internal
+        pure
+        virtual
+        returns (bytes32)
+    {
+        bytes32 leafHash = keccak256(abi.encode(message));
+        return MerkleProof.processProof(proof, leafHash);
+    }
+
+    function _verifyBeefyProof(bytes32 extraField, BeefyVerification.Proof calldata beefyProof)
+        internal
+        view
+        virtual
+        returns (bool)
+    {
+        return BeefyVerification.verifyBeefyMMRLeaf(BEEFY_CLIENT, extraField, beefyProof);
     }
 }
