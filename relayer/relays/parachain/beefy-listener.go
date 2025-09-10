@@ -145,7 +145,7 @@ func (li *BeefyListener) doScan(ctx context.Context, beefyBlockNumber uint64) er
 		return err
 	}
 	for _, task := range tasks {
-		solochainNonce := (*task.MessageProofs)[0].Message.Nonce
+		solochainNonce := (*task.MessageProofs)[0].Message.OriginalMessage.Nonce
 		waitingPeriod := (uint64(solochainNonce) + li.scheduleConfig.TotalRelayerCount - li.scheduleConfig.ID) % li.scheduleConfig.TotalRelayerCount
 		err = li.waitAndSend(ctx, task, waitingPeriod)
 		if err != nil {
@@ -282,7 +282,7 @@ func (li *BeefyListener) generateAndValidateMessagesMerkleProof(input *ProofInpu
 }
 
 func (li *BeefyListener) waitAndSend(ctx context.Context, task *Task, waitingPeriod uint64) error {
-	solochainNonce := (*task.MessageProofs)[0].Message.Nonce
+	solochainNonce := (*task.MessageProofs)[0].Message.OriginalMessage.Nonce
 	log.Infof("Waiting for solochain message (nonce %d) to be potentially picked up by another relayer", solochainNonce)
 	var cnt uint64
 	var err error

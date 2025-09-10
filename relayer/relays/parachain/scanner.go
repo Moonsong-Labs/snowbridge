@@ -171,6 +171,7 @@ func (s *Scanner) filterTasks(
 
 		// Get the messages in the corresponding block
 		var messagesInBlock []OutboundQueueMessage
+		var messagesWithFee []OutboundQueueMessageWithFee
 		rawMessages, err := s.soloConn.API().RPC.State.GetStorageRaw(messagesKey, blockHash)
 		if err != nil {
 			return nil, fmt.Errorf("filterTasks: Error fetching committed messages for block %s (order Nonce %d): %w", blockHash.Hex(), order.Nonce, err)
@@ -206,6 +207,10 @@ func (s *Scanner) filterTasks(
 				return nil, fmt.Errorf("filterTasks: Banned address found in message %d/%d in block %s (order Nonce %d). Message Origin %s, Nonce %d, Topic %s", i+1, numMessages, blockHash.Hex(), order.Nonce, m.Origin.Hex(), m.Nonce, m.Topic.Hex())
 			}
 			messagesInBlock = append(messagesInBlock, m)
+			var messageWithFee OutboundQueueMessageWithFee
+			messageWithFee.OriginalMessage = m
+			messageWithFee.Fee = order.Fee
+			messagesWithFee = append(messagesWithFee, messageWithFee)
 		}
 
 		// For the outbound channel, the commitment hash is the merkle root of the messages
@@ -216,7 +221,7 @@ func (s *Scanner) filterTasks(
 			s.soloConn.API(),
 			blockHash,
 			*commitmentHash,
-			messagesInBlock,
+			messagesWithFee,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("filterTasks: Error scanning for outbound queue proofs for block %s (order Nonce %d): %w", blockHash.Hex(), order.Nonce, err)
@@ -303,7 +308,7 @@ func scanForOutboundQueueProofs(
 	api *gsrpc.SubstrateAPI,
 	blockHash types.Hash,
 	commitmentHash types.H256,
-	messages []OutboundQueueMessage,
+	messages []OutboundQueueMessageWithFee,
 ) (*struct {
 	proofs []MessageProof
 }, error) {
@@ -341,7 +346,7 @@ func fetchMessageProof(
 	api *gsrpc.SubstrateAPI,
 	blockHash types.Hash,
 	messageIndex uint64,
-	message OutboundQueueMessage,
+	message OutboundQueueMessageWithFee,
 ) (MessageProof, error) {
 	var proofHex string
 	var proof MessageProof
