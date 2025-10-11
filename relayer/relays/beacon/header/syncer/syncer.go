@@ -313,7 +313,9 @@ func (s *Syncer) GetBlockRoots(slot uint64) (scale.BlockRootProof, error) {
 	forkVersion := s.protocol.ForkVersion(slot)
 
 	blockRootsContainer = &state.BlockRootsContainerMainnet{}
-	if forkVersion == protocol.Electra {
+	if forkVersion == protocol.Fulu {
+		beaconState = &state.BeaconStateFulu{}
+	} else if forkVersion == protocol.Electra {
 		beaconState = &state.BeaconStateElectra{}
 	} else {
 		beaconState = &state.BeaconStateDenebMainnet{}
@@ -554,7 +556,7 @@ func (s *Syncer) GetHeaderUpdate(blockRoot common.Hash, checkpoint *cache.Proof)
 
 	var signedBlock state.SignedBeaconBlock
 	forkVersion := s.protocol.ForkVersion(slot)
-	if forkVersion == protocol.Electra {
+	if forkVersion == protocol.Fulu || forkVersion == protocol.Electra {
 		signedBlock = &state.SignedBeaconBlockElectra{}
 	} else {
 		signedBlock = &state.SignedBeaconBlockDeneb{}
@@ -632,7 +634,9 @@ func (s *Syncer) getBeaconStateAtSlot(slot uint64) (state.BeaconState, error) {
 func (s *Syncer) UnmarshalBeaconState(slot uint64, data []byte) (state.BeaconState, error) {
 	var beaconState state.BeaconState
 	forkVersion := s.protocol.ForkVersion(slot)
-	if forkVersion == protocol.Electra {
+	if forkVersion == protocol.Fulu {
+		beaconState = &state.BeaconStateFulu{}
+	} else if forkVersion == protocol.Electra {
 		beaconState = &state.BeaconStateElectra{}
 	} else {
 		beaconState = &state.BeaconStateDenebMainnet{}
