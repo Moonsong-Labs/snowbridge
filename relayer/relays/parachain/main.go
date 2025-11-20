@@ -13,10 +13,6 @@ import (
 	"github.com/snowfork/snowbridge/relayer/crypto/secp256k1"
 
 	"github.com/snowfork/snowbridge/relayer/ofac"
-	"github.com/snowfork/snowbridge/relayer/relays/beacon/header"
-	"github.com/snowfork/snowbridge/relayer/relays/beacon/header/syncer/api"
-	"github.com/snowfork/snowbridge/relayer/relays/beacon/protocol"
-	"github.com/snowfork/snowbridge/relayer/relays/beacon/store"
 
 	log "github.com/sirupsen/logrus"
 )
