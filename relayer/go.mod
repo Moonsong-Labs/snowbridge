@@ -110,3 +110,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
+
+// Solochain-specific fork with BeefyExtraField, NewEcdsaKeyringPair, NewSr25519KeyringPair
+replace github.com/snowfork/go-substrate-rpc-client/v4 => github.com/Moonsong-Labs/go-substrate-rpc-client/v4 v4.1.1-msl

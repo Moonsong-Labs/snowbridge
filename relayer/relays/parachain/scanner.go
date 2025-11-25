@@ -332,7 +332,7 @@ func (s *Scanner) gatherProofInputs(
 			SolochainBlockNumber: solochainBlockNumber,
 			SolochainBlockHash:   solochainBlockHash,
 			Messages:             messagesInBlock,
-			MessageNonce:         uint64((*task.MessageProofs)[0].Message.Nonce),
+			MessageNonce:         uint64((*task.MessageProofs)[0].Message.OriginalMessage.Nonce),
 		}
 	}
 

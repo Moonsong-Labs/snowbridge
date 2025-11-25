@@ -17,8 +17,8 @@ import (
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
 	"github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/snowfork/snowbridge/relayer/contracts"
-	"github.com/snowfork/snowbridge/relayer/crypto/sr25519"
 	"github.com/snowfork/snowbridge/relayer/ofac"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/header"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/header/syncer/api"
@@ -553,7 +553,7 @@ func (r *Relay) doSubmit(ctx context.Context, ev *contracts.GatewayOutboundMessa
 	// Extract beneficiaries from gas estimation
 	var beneficiaries []string
 	if r.gasEstimator.config.Enabled {
-		relayerPublicKey := r.keypair.PublicKey()
+		relayerPublicKey := hexutil.Encode(r.keypair.PublicKey)
 		gasEstimate, err := r.gasEstimator.EstimateGas(ctx, ev, inboundMsg, source, relayerPublicKey)
 		if err != nil {
 			return fmt.Errorf("gas estimation failed: %w", err)

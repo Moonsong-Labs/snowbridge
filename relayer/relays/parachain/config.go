@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/snowfork/snowbridge/relayer/config"
+	beaconconf "github.com/snowfork/snowbridge/relayer/relays/beacon/config"
 )
 
 type Config struct {

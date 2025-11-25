@@ -115,8 +115,8 @@ func (g *GasEstimator) EstimateGas(ctx context.Context, ev *contracts.GatewayOut
 
 	// Payload parameters for XCM construction and delivery fee calculation
 	xcmHex := ""
-	if len(ev.Payload.Xcm.Data) > 0 {
-		xcmHex = fmt.Sprintf("0x%x", ev.Payload.Xcm.Data)
+	if len(ev.Payload.Message.Data) > 0 {
+		xcmHex = fmt.Sprintf("0x%x", ev.Payload.Message.Data)
 	}
 
 	claimerHex := ""
@@ -142,7 +142,7 @@ func (g *GasEstimator) EstimateGas(ctx context.Context, ev *contracts.GatewayOut
 		"--event-log-topics", eventLogTopics,
 		"--event-log-data", eventLogData,
 		"--proof", proofHex,
-		"--xcm-kind", fmt.Sprintf("%d", ev.Payload.Xcm.Kind),
+		"--xcm-kind", fmt.Sprintf("%d", ev.Payload.Message.Kind),
 		"--xcm-data", xcmHex,
 		"--claimer", claimerHex,
 		"--origin", source,

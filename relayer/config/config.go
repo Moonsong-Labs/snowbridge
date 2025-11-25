@@ -13,7 +13,8 @@ type ParachainConfig struct {
 }
 
 type SolochainConfig struct {
-	Endpoint string `mapstructure:"endpoint"`
+	Endpoint      string `mapstructure:"endpoint"`
+	HeartbeatSecs uint64 `mapstructure:"heartbeat-secs"`
 }
 
 type EthereumConfig struct {

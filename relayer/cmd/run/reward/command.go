@@ -10,6 +10,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/snowfork/snowbridge/relayer/chain/parachain"
+	"github.com/snowfork/snowbridge/relayer/crypto/sr25519"
 	"github.com/snowfork/snowbridge/relayer/relays/reward"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -68,7 +69,7 @@ func run(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	relay := reward.NewRelay(&config, keypair)
+	relay := reward.NewRelay(&config, sr25519.NewKeypairFromKRP(*keypair))
 	if err != nil {
 		return err
 	}
