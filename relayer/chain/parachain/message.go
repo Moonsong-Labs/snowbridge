@@ -5,9 +5,11 @@ package parachain
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 
 	gethCommon "github.com/ethereum/go-ethereum/common"
+	sc "github.com/snowfork/go-substrate-rpc-client/v4/scale"
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/header/syncer/json"
 	"github.com/snowfork/snowbridge/relayer/relays/beacon/header/syncer/scale"
@@ -124,4 +126,91 @@ func removeLeadingZeroHashForSlice(s []string) []string {
 
 func removeLeadingZeroHash(s string) string {
 	return strings.Replace(s, "0x", "", 1)
+}
+
+// Storage ValidationData from ParachainSystem pallet
+type PersistedValidationData struct {
+	ParentHead             []byte
+	RelayParentNumber      uint32
+	RelayParentStorageRoot types.Hash
+	MaxPOVSize             uint32
+}
+
+// Storage PendingOrder from EthereumOutboundQueueV2 pallet
+type PendingOrder struct {
+	Nonce       uint64
+	BlockNumber uint32
+	Fee         big.Int
+}
+
+func (p *PendingOrder) Decode(decoder sc.Decoder) error {
+	var nonce types.U64
+	err := decoder.Decode(&nonce)
+	if err != nil {
+		return err
+	}
+	p.Nonce = uint64(nonce)
+	var blockNumber types.U32
+	err = decoder.Decode(&blockNumber)
+	if err != nil {
+		return err
+	}
+	p.BlockNumber = uint32(blockNumber)
+	decoded, err := decoder.DecodeUintCompact()
+	if err != nil {
+		return err
+	}
+	p.Fee = *types.U128{Int: decoded}.Int
+	return nil
+}
+
+type OutboundQueueMessage struct {
+	ChannelID      types.H256
+	Nonce          uint64
+	Command        uint8
+	Params         []byte
+	MaxDispatchGas uint64
+	MaxFeePerGas   types.U128
+	Reward         types.U128
+	ID             types.Bytes32
+}
+
+func (m *OutboundQueueMessage) Decode(decoder sc.Decoder) error {
+	err := decoder.Decode(&m.ChannelID)
+	if err != nil {
+		return err
+	}
+	decoded, err := decoder.DecodeUintCompact()
+	if err != nil {
+		return err
+	}
+	m.Nonce = decoded.Uint64()
+	err = decoder.Decode(&m.Command)
+	if err != nil {
+		return err
+	}
+	err = decoder.Decode(&m.Params)
+	if err != nil {
+		return err
+	}
+	decoded, err = decoder.DecodeUintCompact()
+	if err != nil {
+		return err
+	}
+	m.MaxDispatchGas = decoded.Uint64()
+	decoded, err = decoder.DecodeUintCompact()
+	if err != nil {
+		return err
+	}
+	m.MaxFeePerGas = types.U128{Int: decoded}
+	decoded, err = decoder.DecodeUintCompact()
+	if err != nil {
+		return err
+	}
+	m.Reward = types.U128{Int: decoded}
+	err = decoder.Decode(&m.ID)
+	if err != nil {
+		return err
+	}
+	return nil
 }

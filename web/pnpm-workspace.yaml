@@ -1,7 +1,10 @@
 packages:
   - "packages/test"
+  - "packages/base-types"
   - "packages/api"
   - "packages/contracts"
   - "packages/contract-types"
+  - "packages/registry"
   - "packages/test-helpers"
   - "packages/operations"
+minimumReleaseAge: 259200

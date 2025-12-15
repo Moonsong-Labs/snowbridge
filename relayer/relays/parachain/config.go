@@ -56,8 +56,6 @@ func (r ScheduleConfig) Validate() error {
 	return nil
 }
 
-type ChannelID [32]byte
-
 func (c Config) Validate() error {
 	// Source
 	err := c.Source.Solochain.Validate()

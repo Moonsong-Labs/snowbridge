@@ -90,6 +90,12 @@ type OutboundQueueMessage struct {
 	Commands []CommandWrapper
 }
 
+type OutboundQueueMessageWithFee struct {
+	OriginalMessage OutboundQueueMessage
+	// Attached fee in Ether
+	Fee big.Int
+}
+
 type CommandWrapper struct {
 	Kind           types.U8
 	MaxDispatchGas types.U64
@@ -118,7 +124,7 @@ func (m OutboundQueueMessage) IntoInboundMessage() contracts.InboundMessage {
 }
 
 type MessageProof struct {
-	Message OutboundQueueMessage
+	Message OutboundQueueMessageWithFee
 	Proof   MerkleProof
 }
 

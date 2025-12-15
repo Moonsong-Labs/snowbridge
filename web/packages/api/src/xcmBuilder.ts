@@ -2,10 +2,25 @@ import { Registry } from "@polkadot/types/types"
 import { beneficiaryMultiAddress } from "./utils"
 import { ETHER_TOKEN_ADDRESS } from "./assets_v2"
 
-export const HERE_LOCATION = { parents: 0, interior: "Here"  }
-export const DOT_LOCATION = { parents: 1, interior: "Here"  }
+export const HERE_LOCATION = { parents: 0, interior: "Here" }
+export const DOT_LOCATION = { parents: 1, interior: "Here" }
+export const NATIVE_TOKEN_LOCATION = { parents: 1, interior: "Here" }
+export const polkadotNetwork = {
+    GlobalConsensus: { Polkadot: { network: null } },
+}
+export const kusamaNetwork = {
+    GlobalConsensus: { Kusama: { network: null } },
+}
+export const dotLocationOnKusamaAssetHub = {
+    parents: 2,
+    interior: { x1: [{ GlobalConsensus: { Polkadot: null } }] },
+}
+export const ksmLocationOnPolkadotAssetHub = {
+    parents: 2,
+    interior: { x1: [{ GlobalConsensus: { Kusama: null } }] },
+}
 
-const ethereumNetwork = (ethChainId: number) => ({
+export const ethereumNetwork = (ethChainId: number) => ({
     GlobalConsensus: { Ethereum: { chain_id: ethChainId } },
 })
 
@@ -20,6 +35,27 @@ export function parachainLocation(paraId: number) {
     return {
         parents: 1,
         interior: { x1: [{ parachain: paraId }] },
+    }
+}
+
+export function accountId32Location(hexAddress: string) {
+    return {
+        parents: 0,
+        interior: { x1: [{ accountId32: { id: hexAddress } }] },
+    }
+}
+
+export function kusamaAssetHubLocation(parachainId: number) {
+    return {
+        parents: 2,
+        interior: { x2: [{ GlobalConsensus: { Kusama: null } }, { parachain: parachainId }] },
+    }
+}
+
+export function polkadotAssetHubLocation(parachainId: number) {
+    return {
+        parents: 2,
+        interior: { x2: [{ GlobalConsensus: { Polkadot: null } }, { parachain: parachainId }] },
     }
 }
 
@@ -48,6 +84,45 @@ export function erc20LocationReanchored(tokenAddress: string) {
     }
 }
 
+export function convertToXcmV3X1(location: any) {
+    if (location.interior.x1) {
+        const convertedLocation = JSON.parse(JSON.stringify(location))
+        convertedLocation.interior.x1 = convertedLocation.interior.x1[0]
+        return convertedLocation
+    }
+    return location
+}
+
+export function getTokenFromLocation(location: any, chainId: number) {
+    if (location.parents === 2) {
+        // New XCM multi-location format. x1 is an array.
+        if (
+            location.interior.x1 &&
+            location.interior.x1[0]?.globalConsensus?.ethereum?.chainId === chainId
+        ) {
+            return ETHER_TOKEN_ADDRESS
+        }
+        // Old XCM multi-location format. x1 is not an array.
+        if (
+            location.interior.x1 &&
+            location.interior.x1.globalConsensus?.ethereum?.chainId === chainId
+        ) {
+            return ETHER_TOKEN_ADDRESS
+        }
+        if (
+            location.interior.x2 &&
+            location.interior.x2[0]?.globalConsensus?.ethereum?.chainId === chainId &&
+            location.interior.x2[1].accountKey20
+        ) {
+            const token = String(location.interior.x2[1].accountKey20.key.toLowerCase())
+            if (token !== ETHER_TOKEN_ADDRESS) {
+                return token
+            }
+        }
+    }
+    return undefined
+}
+
 export function buildParachainERC20ReceivedXcmOnDestination(
     registry: Registry,
     ethChainId: number,
@@ -55,7 +130,7 @@ export function buildParachainERC20ReceivedXcmOnDestination(
     transferAmount: bigint,
     feeInDot: bigint,
     beneficiary: string,
-    topic: string
+    topic: string,
 ) {
     let {
         hexAddress,
@@ -129,7 +204,7 @@ export function buildAssetHubERC20ReceivedXcm(
     transferAmount: bigint,
     feeInDot: bigint,
     beneficiary: string,
-    topic: string
+    topic: string,
 ) {
     let {
         hexAddress,
@@ -215,7 +290,7 @@ export function buildParachainERC20ReceivedXcmOnAssetHub(
     totalFeeInDot: bigint,
     destinationFeeInDot: bigint,
     beneficiary: string,
-    topic: string
+    topic: string,
 ) {
     let {
         hexAddress,
@@ -332,6 +407,27 @@ export function buildParachainERC20ReceivedXcmOnAssetHub(
     })
 }
 
+function buildAssetHubXcmFromParachainKusama(beneficiary: string, topic: string) {
+    return [
+        {
+            depositAsset: {
+                assets: {
+                    Wild: {
+                        AllCounted: 2,
+                    },
+                },
+                beneficiary: {
+                    parents: 0,
+                    interior: { x1: [{ AccountId32: { id: beneficiary } }] },
+                },
+            },
+        },
+        {
+            setTopic: topic,
+        },
+    ]
+}
+
 function buildAssetHubXcmFromParachain(
     ethChainId: number,
     sourceAccount: string,
@@ -340,7 +436,7 @@ function buildAssetHubXcmFromParachain(
     topic: string,
     sourceParachainId: number,
     destinationFee: bigint,
-    feeAssetId: any
+    feeAssetId: any,
 ) {
     let {
         hexAddress,
@@ -444,6 +540,16 @@ function buildAssetHubXcmFromParachain(
     ]
 }
 
+export function buildAssetHubERC20TransferToKusama(
+    registry: Registry,
+    beneficiary: string,
+    topic: string,
+) {
+    return registry.createType("XcmVersionedXcm", {
+        v4: buildAssetHubXcmFromParachainKusama(beneficiary, topic),
+    })
+}
+
 export function buildAssetHubERC20TransferFromParachain(
     registry: Registry,
     ethChainId: number,
@@ -453,7 +559,7 @@ export function buildAssetHubERC20TransferFromParachain(
     topic: string,
     sourceParachainId: number,
     returnToSenderFee: bigint,
-    feeAssetId: any
+    feeAssetId: any,
 ) {
     return registry.createType("XcmVersionedXcm", {
         v4: buildAssetHubXcmFromParachain(
@@ -464,7 +570,7 @@ export function buildAssetHubERC20TransferFromParachain(
             topic,
             sourceParachainId,
             returnToSenderFee,
-            feeAssetId
+            feeAssetId,
         ),
     })
 }
@@ -483,37 +589,76 @@ export function buildResultXcmAssetHubERC20TransferFromParachain(
     returnToSenderFee: bigint,
     feeAssetId: any,
     feeAssetIdReanchored: any,
+    teleportFee: boolean,
 ) {
     return registry.createType("XcmVersionedXcm", {
         v4: [
-            {
-                withdrawAsset: [
-                    {
-                        id: feeAssetIdReanchored,
-                        fun: {
-                            Fungible: totalFee,
-                        },
-                    },
-                    {
-                        id: erc20Location(ethChainId, tokenAddress),
-                        fun: {
-                            Fungible: transferAmount,
-                        },
-                    },
-                ],
-            },
+            ...(teleportFee
+                ? // Teleport Fee
+                  [
+                      {
+                          receiveTeleportedAsset: [
+                              {
+                                  id: feeAssetIdReanchored,
+                                  fun: {
+                                      Fungible: totalFee,
+                                  },
+                              },
+                          ],
+                      },
+                      {
+                          buyExecution: {
+                              fees: {
+                                  id: feeAssetIdReanchored,
+                                  fun: {
+                                      Fungible: destinationFee,
+                                  },
+                              },
+                              weightLimit: "Unlimited",
+                          },
+                      },
+                      {
+                          withdrawAsset: [
+                              {
+                                  id: erc20Location(ethChainId, tokenAddress),
+                                  fun: {
+                                      Fungible: transferAmount,
+                                  },
+                              },
+                          ],
+                      },
+                  ]
+                : // Reserve Transfer Fee
+                  [
+                      {
+                          withdrawAsset: [
+                              {
+                                  id: feeAssetIdReanchored,
+                                  fun: {
+                                      Fungible: totalFee,
+                                  },
+                              },
+                              {
+                                  id: erc20Location(ethChainId, tokenAddress),
+                                  fun: {
+                                      Fungible: transferAmount,
+                                  },
+                              },
+                          ],
+                      },
+                      {
+                          buyExecution: {
+                              fees: {
+                                  id: feeAssetIdReanchored,
+                                  fun: {
+                                      Fungible: destinationFee,
+                                  },
+                              },
+                              weightLimit: "Unlimited",
+                          },
+                      },
+                  ]),
             { clearOrigin: null },
-            {
-                buyExecution: {
-                    fees: {
-                        id: feeAssetIdReanchored,
-                        fun: {
-                            Fungible: destinationFee,
-                        },
-                    },
-                    weightLimit: "Unlimited",
-                },
-            },
             ...buildAssetHubXcmFromParachain(
                 ethChainId,
                 sourceAccount,
@@ -522,7 +667,7 @@ export function buildResultXcmAssetHubERC20TransferFromParachain(
                 topic,
                 sourceParachainId,
                 returnToSenderFee,
-                feeAssetId
+                feeAssetId,
             ),
         ],
     })
@@ -538,7 +683,7 @@ export function buildResultXcmAssetHubPNATransferFromParachain(
     topic: string,
     transferAmount: bigint,
     totalFeeInDot: bigint,
-    destinationFeeInDot: bigint
+    destinationFeeInDot: bigint,
 ) {
     return registry.createType("XcmVersionedXcm", {
         v4: [
@@ -579,7 +724,7 @@ export function buildResultXcmAssetHubPNATransferFromParachain(
                 beneficiary,
                 assetLocationOnAH,
                 assetLocationOnEthereum,
-                topic
+                topic,
             ),
         ],
     })
@@ -645,7 +790,7 @@ export function buildParachainPNAReceivedXcmOnDestination(
     transferAmount: bigint,
     feeInDot: bigint,
     beneficiary: string,
-    topic: string
+    topic: string,
 ) {
     let {
         hexAddress,
@@ -722,7 +867,7 @@ export function buildAssetHubPNATransferFromParachain(
     beneficiary: string,
     assetLocationOnAH: any,
     assetLocationOnEthereum: any,
-    topic: string
+    topic: string,
 ) {
     return registry.createType("XcmVersionedXcm", {
         v4: buildAssetHubXcmForPNAFromParachain(
@@ -730,7 +875,7 @@ export function buildAssetHubPNATransferFromParachain(
             beneficiary,
             assetLocationOnAH,
             assetLocationOnEthereum,
-            topic
+            topic,
         ),
     })
 }
@@ -744,7 +889,7 @@ export function buildParachainPNAReceivedXcmOnAssetHub(
     totalFeeInDot: bigint,
     destinationFeeInDot: bigint,
     beneficiary: string,
-    topic: string
+    topic: string,
 ) {
     let {
         hexAddress,
@@ -881,7 +1026,7 @@ export function buildAssetHubPNAReceivedXcm(
     transferAmount: bigint,
     feeInDot: bigint,
     beneficiary: string,
-    topic: string
+    topic: string,
 ) {
     let {
         hexAddress,
@@ -965,7 +1110,7 @@ export function buildExportXcmForERC20(
     topic: string,
     transferAmount: bigint,
     totalFeeInDot: bigint,
-    assetHubParaId: number
+    assetHubParaId: number,
 ) {
     let {
         hexAddress,
@@ -1080,7 +1225,7 @@ export function buildExportXcmForPNA(
     topic: string,
     transferAmount: bigint,
     totalFeeInDot: bigint,
-    assetHubParaId: number
+    assetHubParaId: number,
 ) {
     let {
         hexAddress,
@@ -1185,4 +1330,546 @@ export function buildExportXcmForPNA(
             },
         ],
     })
+}
+
+export function isKSMOnOtherConsensusSystem(location: any) {
+    return matchesConsensusSystem(location, "Kusama")
+}
+
+export function isDOTOnOtherConsensusSystem(location: any): boolean {
+    return matchesConsensusSystem(location, "Polkadot")
+}
+
+export function isDOT(location: any): boolean {
+    if (location.parents !== 1 || !location.interior) return false
+
+    if (location.interior !== "Here" && location.interior !== "here") return false
+
+    return true
+}
+
+export function matchesConsensusSystem(location: any, expectedSystem: string): boolean {
+    if (location.parents !== 2 || !location.interior) return false
+
+    const kind = Object.keys(location.interior).find((k) => k.toLowerCase() === "x1")
+    if (!kind) return false
+
+    const values = location.interior[kind]
+    if (!Array.isArray(values) || values.length === 0) return false
+
+    const consensus = values[0]
+    const consensusKey = Object.keys(consensus || {}).find(
+        (k) => k.toLowerCase() === "globalconsensus",
+    )
+    if (!consensusKey) return false
+
+    const consensusValue = consensus[consensusKey]
+    return (
+        typeof consensusValue === "object" &&
+        Object.keys(consensusValue).some((k) => k.toLowerCase() === expectedSystem.toLowerCase())
+    )
+}
+
+export function isEthereumAsset(location: any): boolean {
+    if (location.parents !== 2 || !location.interior) return false
+
+    const interior = location.interior
+
+    const kind = Object.keys(interior).find(
+        (k) => k.toLowerCase() === "x1" || k.toLowerCase() === "x2",
+    )
+
+    if (!kind) return false
+
+    const values = interior[kind]
+    if (!Array.isArray(values) || values.length === 0) return false
+
+    const consensus = values[0]
+
+    const consensusKey = Object.keys(consensus || {}).find(
+        (k) => k.toLowerCase() === "globalconsensus",
+    )
+
+    if (!consensusKey) return false
+
+    const consensusValue = consensus[consensusKey]
+
+    return (
+        typeof consensusValue === "object" &&
+        Object.keys(consensusValue).some((k) => k.toLowerCase() === "ethereum")
+    )
+}
+
+export function isRelaychainLocation(location: any) {
+    return location.parents == DOT_LOCATION.parents && location.interior == DOT_LOCATION.interior
+}
+
+export function isParachainNative(location: any, parachainId: number) {
+    return JSON.stringify(location) == JSON.stringify(parachainLocation(parachainId))
+}
+
+export function isEthereumNative(location: any, ethChainId: number) {
+    return JSON.stringify(location) == JSON.stringify(bridgeLocation(ethChainId))
+}
+
+export const accountToLocation = (account: string) => {
+    let {
+        hexAddress,
+        address: { kind },
+    } = beneficiaryMultiAddress(account)
+    let beneficiaryLocation
+    switch (kind) {
+        case 1:
+            // 32 byte addresses
+            beneficiaryLocation = { accountId32: { id: hexAddress } }
+            break
+        case 2:
+            // 20 byte addresses
+            beneficiaryLocation = { accountKey20: { key: hexAddress } }
+            break
+        default:
+            throw Error(`Could not parse beneficiary address ${account}`)
+    }
+    return beneficiaryLocation
+}
+
+export const WESTEND_GENESIS = "0xe143f23803ac50e8f6f8e62695d1ce9e4e1d68aa36c1cd2cfd15340213f3423e"
+export const ROCOCO_GENESIS = "0x6408de7737c59c238890533af25896a2c20608d8b380bb01029acb392781063e"
+export const PASEO_GENESIS = "0x77afd6190f1554ad45fd0d31aee62aacc33c6db0ea801129acb813f913e0764f"
+
+export const accountToLocationWithNetwork = (account: string, envName: string) => {
+    let {
+        hexAddress,
+        address: { kind },
+    } = beneficiaryMultiAddress(account)
+    let beneficiaryLocation
+    switch (kind) {
+        case 1:
+            // 32 byte addresses
+            switch (envName) {
+                case "polkadot_mainnet": {
+                    beneficiaryLocation = {
+                        accountId32: { id: hexAddress, network: { Polkadot: { network: null } } },
+                    }
+                    break
+                }
+                case "paseo_sepolia": {
+                    beneficiaryLocation = {
+                        accountId32: { id: hexAddress, network: { byGenesis: PASEO_GENESIS } },
+                    }
+                    break
+                }
+                case "westend_sepolia": {
+                    beneficiaryLocation = {
+                        accountId32: { id: hexAddress, network: { byGenesis: WESTEND_GENESIS } },
+                    }
+                    break
+                }
+                case "local_e2e": {
+                    beneficiaryLocation = {
+                        accountId32: { id: hexAddress, network: { byGenesis: WESTEND_GENESIS } },
+                    }
+                    break
+                }
+            }
+            break
+        case 2:
+            // 20 byte addresses
+            switch (envName) {
+                case "polkadot_mainnet": {
+                    beneficiaryLocation = {
+                        accountKey20: { key: hexAddress, network: { Polkadot: { network: null } } },
+                    }
+                    break
+                }
+                case "paseo_sepolia": {
+                    beneficiaryLocation = {
+                        accountKey20: { key: hexAddress, network: { Polkadot: { network: null } } },
+                    }
+                    break
+                }
+                case "westend_sepolia": {
+                    beneficiaryLocation = {
+                        accountKey20: { key: hexAddress, network: { Polkadot: { network: null } } },
+                    }
+                    break
+                }
+            }
+            break
+        default:
+            throw Error(`Could not parse beneficiary address ${account}`)
+    }
+    return beneficiaryLocation
+}
+
+export function buildAssetHubERC20TransferFromParachainWithNativeFee(
+    registry: Registry,
+    ethChainId: number,
+    sourceAccount: string,
+    beneficiary: string,
+    tokenAddress: string,
+    topic: string,
+    sourceParachainId: number,
+    amount: bigint,
+    returnToSenderFeeInDot: bigint,
+    feeAssetId: any,
+) {
+    return registry.createType("XcmVersionedXcm", {
+        v4: buildAssetHubXcmFromParachainWithNativeAssetAsFee(
+            ethChainId,
+            sourceAccount,
+            beneficiary,
+            tokenAddress,
+            topic,
+            sourceParachainId,
+            amount,
+            returnToSenderFeeInDot,
+            feeAssetId,
+        ),
+    })
+}
+
+function buildAssetHubXcmFromParachainWithNativeAssetAsFee(
+    ethChainId: number,
+    sourceAccount: string,
+    beneficiary: string,
+    tokenAddress: string,
+    topic: string,
+    sourceParachainId: number,
+    amount: bigint,
+    destinationFeeInDot: bigint,
+    feeAssetId: any,
+) {
+    let {
+        hexAddress,
+        address: { kind },
+    } = beneficiaryMultiAddress(sourceAccount)
+    let sourceAccountLocation
+    switch (kind) {
+        case 1:
+            // 32 byte addresses
+            sourceAccountLocation = { accountId32: { id: hexAddress } }
+            break
+        case 2:
+            // 20 byte addresses
+            sourceAccountLocation = { accountKey20: { key: hexAddress } }
+            break
+        default:
+            throw Error(`Could not parse source address ${sourceAccount}`)
+    }
+    let appendixInstructions = [
+        // Exchange some DOT to pay the fee on the source parachain
+        {
+            exchangeAsset: {
+                give: {
+                    Wild: {
+                        AllOf: {
+                            id: feeAssetId,
+                            fun: "Fungible",
+                        },
+                    },
+                },
+                want: [
+                    {
+                        id: DOT_LOCATION,
+                        fun: {
+                            Fungible: destinationFeeInDot,
+                        },
+                    },
+                ],
+                maximal: false,
+            },
+        },
+        // DepositReserveAsset for both DOT and the ERC-20 asset
+        {
+            depositReserveAsset: {
+                assets: {
+                    definite: [
+                        {
+                            id: DOT_LOCATION,
+                            fun: {
+                                Fungible: destinationFeeInDot,
+                            },
+                        },
+                        {
+                            id: erc20Location(ethChainId, tokenAddress),
+                            fun: { Fungible: amount },
+                        },
+                    ],
+                },
+                dest: { parents: 1, interior: { x1: [{ parachain: sourceParachainId }] } },
+                xcm: [
+                    {
+                        buyExecution: {
+                            fees: {
+                                id: DOT_LOCATION,
+                                fun: {
+                                    fungible: destinationFeeInDot,
+                                },
+                            },
+                            weightLimit: "Unlimited",
+                        },
+                    },
+                    {
+                        depositAsset: {
+                            assets: {
+                                wild: {
+                                    allCounted: 2,
+                                },
+                            },
+                            beneficiary: {
+                                parents: 0,
+                                interior: { x1: [sourceAccountLocation] },
+                            },
+                        },
+                    },
+                    { setTopic: topic },
+                ],
+            },
+        },
+    ]
+    return [
+        // Error Handling, return everything to sender on source parachain
+        {
+            setAppendix: appendixInstructions,
+        },
+        // Initiate the bridged transfer
+        {
+            initiateReserveWithdraw: {
+                assets: {
+                    Wild: {
+                        AllOf: { id: erc20Location(ethChainId, tokenAddress), fun: "Fungible" },
+                    },
+                },
+                reserve: bridgeLocation(ethChainId),
+                xcm: [
+                    {
+                        buyExecution: {
+                            fees: {
+                                id: erc20LocationReanchored(tokenAddress), // CAUTION: Must use reanchored locations.
+                                fun: {
+                                    Fungible: "1", // Offering 1 unit as fee, but it is returned to the beneficiary address.
+                                },
+                            },
+                            weight_limit: "Unlimited",
+                        },
+                    },
+                    {
+                        depositAsset: {
+                            assets: {
+                                Wild: {
+                                    AllCounted: 1,
+                                },
+                            },
+                            beneficiary: {
+                                parents: 0,
+                                interior: { x1: [{ AccountKey20: { key: beneficiary } }] },
+                            },
+                        },
+                    },
+                    {
+                        setTopic: topic,
+                    },
+                ],
+            },
+        },
+        {
+            setTopic: topic,
+        },
+    ]
+}
+
+export function buildERC20ToAssetHubFromParachain(
+    registry: Registry,
+    ethChainId: number,
+    sourceAccount: string,
+    beneficiary: string,
+    tokenAddress: string,
+    topic: string,
+    transferAmount: bigint,
+    totalFee: bigint,
+    destinationFee: bigint,
+    feeAssetIdReanchored: any,
+) {
+    let {
+        hexAddress,
+        address: { kind },
+    } = beneficiaryMultiAddress(beneficiary)
+    let beneficiaryAccountLocation
+    switch (kind) {
+        case 1:
+            // 32 byte addresses
+            beneficiaryAccountLocation = { accountId32: { id: hexAddress } }
+            break
+        case 2:
+            // 20 byte addresses
+            beneficiaryAccountLocation = { accountKey20: { key: hexAddress } }
+            break
+        default:
+            throw Error(`Could not parse source address ${sourceAccount}`)
+    }
+    return registry.createType("XcmVersionedXcm", {
+        v4: [
+            {
+                withdrawAsset: [
+                    {
+                        id: feeAssetIdReanchored,
+                        fun: {
+                            Fungible: totalFee,
+                        },
+                    },
+                    {
+                        id: erc20Location(ethChainId, tokenAddress),
+                        fun: {
+                            Fungible: transferAmount,
+                        },
+                    },
+                ],
+            },
+            { clearOrigin: null },
+            {
+                buyExecution: {
+                    fees: {
+                        id: feeAssetIdReanchored,
+                        fun: {
+                            Fungible: destinationFee,
+                        },
+                    },
+                    weightLimit: "Unlimited",
+                },
+            },
+            {
+                depositAsset: {
+                    assets: {
+                        Wild: {
+                            AllCounted: 2,
+                        },
+                    },
+                    beneficiary: {
+                        parents: 0,
+                        interior: { x1: [beneficiaryAccountLocation] },
+                    },
+                },
+            },
+            {
+                setTopic: topic,
+            },
+        ],
+    })
+}
+export function buildDepositAllAssetsWithTopic(
+    registry: Registry,
+    beneficiary: string,
+    topic: string,
+) {
+    let {
+        hexAddress,
+        address: { kind },
+    } = beneficiaryMultiAddress(beneficiary)
+    let beneficiaryAccountLocation
+    switch (kind) {
+        case 1:
+            // 32 byte addresses
+            beneficiaryAccountLocation = { accountId32: { id: hexAddress } }
+            break
+        case 2:
+            // 20 byte addresses
+            beneficiaryAccountLocation = { accountKey20: { key: hexAddress } }
+            break
+        default:
+            throw Error(`Could not parse source address ${beneficiary}`)
+    }
+    return registry.createType("XcmVersionedXcm", {
+        v4: [
+            {
+                depositAsset: {
+                    assets: {
+                        Wild: {
+                            AllCounted: 2,
+                        },
+                    },
+                    beneficiary: {
+                        parents: 0,
+                        interior: { x1: [beneficiaryAccountLocation] },
+                    },
+                },
+            },
+            {
+                setTopic: topic,
+            },
+        ],
+    })
+}
+
+export function buildAppendixInstructions(
+    envName: string,
+    sourceParachainId: number,
+    sourceAccount: string,
+    claimerLocation?: any,
+) {
+    let sourceLocation = accountToLocationWithNetwork(sourceAccount, envName)
+    let appendixInstructions: any[] = []
+    if (claimerLocation) {
+        appendixInstructions.push({
+            setHints: {
+                hints: [{ assetClaimer: { location: claimerLocation } }],
+            },
+        })
+    }
+    appendixInstructions.push({
+        refundSurplus: null,
+    })
+    appendixInstructions.push({
+        depositAsset: {
+            assets: {
+                wild: {
+                    allCounted: 3,
+                },
+            },
+            beneficiary: claimerLocation ?? {
+                parents: 1,
+                interior: {
+                    x2: [{ parachain: sourceParachainId }, sourceLocation],
+                },
+            },
+        },
+    })
+    return appendixInstructions
+}
+
+export function buildEthereumInstructions(
+    beneficiaryLocation: any,
+    topic: string,
+    callHex?: string,
+) {
+    let remoteXcm: any[] = [
+        {
+            depositAsset: {
+                assets: {
+                    wild: {
+                        allCounted: 3,
+                    },
+                },
+                beneficiary: {
+                    parents: 0,
+                    interior: { x1: [beneficiaryLocation] },
+                },
+            },
+        },
+    ]
+    if (callHex) {
+        remoteXcm.push({
+            transact: {
+                originKind: "SovereignAccount",
+                fallbackMaxWeight: null,
+                call: {
+                    encoded: callHex,
+                },
+            },
+        })
+    }
+    remoteXcm.push({
+        setTopic: topic,
+    })
+    return remoteXcm
 }

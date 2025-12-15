@@ -17,6 +17,7 @@ import (
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
 	"github.com/snowfork/snowbridge/relayer/chain/parachain"
 	"github.com/snowfork/snowbridge/relayer/contracts"
+	"github.com/snowfork/snowbridge/relayer/crypto/merkle"
 	"github.com/snowfork/snowbridge/relayer/ofac"
 )
 
@@ -170,7 +171,7 @@ func (s *Scanner) filterTasks(
 		}
 
 		// Get the messages in the corresponding block
-		var messagesInBlock []OutboundQueueMessage
+		var messagesWithFee []OutboundQueueMessageWithFee
 		rawMessages, err := s.soloConn.API().RPC.State.GetStorageRaw(messagesKey, blockHash)
 		if err != nil {
 			return nil, fmt.Errorf("filterTasks: Error fetching committed messages for block %s (order Nonce %d): %w", blockHash.Hex(), order.Nonce, err)
@@ -205,24 +206,65 @@ func (s *Scanner) filterTasks(
 			if isBanned {
 				return nil, fmt.Errorf("filterTasks: Banned address found in message %d/%d in block %s (order Nonce %d). Message Origin %s, Nonce %d, Topic %s", i+1, numMessages, blockHash.Hex(), order.Nonce, m.Origin.Hex(), m.Nonce, m.Topic.Hex())
 			}
-			messagesInBlock = append(messagesInBlock, m)
+			var messageWithFee OutboundQueueMessageWithFee
+			messageWithFee.OriginalMessage = m
+			messageWithFee.Fee = order.Fee
+			messagesWithFee = append(messagesWithFee, messageWithFee)
 		}
 
-		// For the outbound channel, the commitment hash is the merkle root of the messages
-		// https://github.com/Snowfork/snowbridge/blob/75a475cbf8fc8e13577ad6b773ac452b2bf82fbb/parachain/pallets/basic-channel/src/outbound/mod.rs#L275-L277
-		// To verify it we fetch the message proof from the solochain
+		// SOLOCHAIN-SPECIFIC: Proof Generation Strategy
+		// ============================================
+		// For solochain, we use a two-tier approach for obtaining message proofs:
+		//
+		// 1. PRIMARY: Fetch proofs from chain storage via scanForOutboundQueueProofs()
+		//    - This queries the solochain's EthereumOutboundQueueV2 pallet directly
+		//    - Preferred because it uses the chain's own proof computation
+		//
+		// 2. FALLBACK: Compute proofs off-chain via buildOutboundQueueProofs()
+		//    - Used if chain storage is unavailable (e.g., pruned state, RPC issues)
+		//    - Requires fetching MessageLeaves and computing merkle tree locally
+		//
+		// This differs from upstream parachain which only uses off-chain computation.
+		// We maintain chain-based fetching as primary for solochain compatibility.
+
 		log.Debugf("filterTasks: Scanning for outbound queue proofs for block %s, commitment %s (order Nonce %d)", blockHash.Hex(), commitmentHash.Hex(), order.Nonce)
-		proofResult, err := scanForOutboundQueueProofs(
+		proofResult, scanErr := scanForOutboundQueueProofs(
 			s.soloConn.API(),
 			blockHash,
 			*commitmentHash,
-			messagesInBlock,
+			messagesWithFee,
 		)
-		if err != nil {
-			return nil, fmt.Errorf("filterTasks: Error scanning for outbound queue proofs for block %s (order Nonce %d): %w", blockHash.Hex(), order.Nonce, err)
+
+		// If primary method fails, fall back to off-chain proof computation
+		if scanErr != nil || proofResult == nil || len(proofResult.proofs) == 0 {
+			if scanErr != nil {
+				log.Warnf("filterTasks: Primary proof fetch failed for block %s (order Nonce %d): %v. Falling back to off-chain computation.", blockHash.Hex(), order.Nonce, scanErr)
+			} else {
+				log.Warnf("filterTasks: No proofs from chain for block %s (order Nonce %d). Falling back to off-chain computation.", blockHash.Hex(), order.Nonce)
+			}
+
+			// Fetch message leaves for off-chain merkle proof computation
+			var messageLeaves []types.H256
+			messageLeavesKey, err := types.CreateStorageKey(s.soloConn.Metadata(), "EthereumOutboundQueueV2", "MessageLeaves", nil, nil)
+			if err != nil {
+				return nil, fmt.Errorf("filterTasks: Error creating storage key for MessageLeaves (order Nonce %d): %w", order.Nonce, err)
+			}
+			_, err = s.soloConn.API().RPC.State.GetStorage(messageLeavesKey, &messageLeaves, blockHash)
+			if err != nil {
+				return nil, fmt.Errorf("filterTasks: Error fetching message leaves for block %s (order Nonce %d): %w", blockHash.Hex(), order.Nonce, err)
+			}
+
+			proofResult, err = buildOutboundQueueProofs(
+				*commitmentHash,
+				messagesWithFee,
+				messageLeaves,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("filterTasks: Off-chain proof computation failed for block %s (order Nonce %d): %w", blockHash.Hex(), order.Nonce, err)
+			}
 		}
 
-		// If we get a proof after scanning, we can set up the corresponding task to relay the order
+		// If we get a proof after scanning (or fallback), set up the corresponding task to relay the order
 		if proofResult != nil && len(proofResult.proofs) > 0 {
 			task := Task{
 				Header:        header,
@@ -290,7 +332,7 @@ func (s *Scanner) gatherProofInputs(
 			SolochainBlockNumber: solochainBlockNumber,
 			SolochainBlockHash:   solochainBlockHash,
 			Messages:             messagesInBlock,
-			MessageNonce:         uint64((*task.MessageProofs)[0].Message.Nonce),
+			MessageNonce:         uint64((*task.MessageProofs)[0].Message.OriginalMessage.Nonce),
 		}
 	}
 
@@ -303,7 +345,7 @@ func scanForOutboundQueueProofs(
 	api *gsrpc.SubstrateAPI,
 	blockHash types.Hash,
 	commitmentHash types.H256,
-	messages []OutboundQueueMessage,
+	messages []OutboundQueueMessageWithFee,
 ) (*struct {
 	proofs []MessageProof
 }, error) {
@@ -341,7 +383,7 @@ func fetchMessageProof(
 	api *gsrpc.SubstrateAPI,
 	blockHash types.Hash,
 	messageIndex uint64,
-	message OutboundQueueMessage,
+	message OutboundQueueMessageWithFee,
 ) (MessageProof, error) {
 	var proofHex string
 	var proof MessageProof
@@ -451,14 +493,13 @@ func (s *Scanner) IsBanned(m OutboundQueueMessage) (bool, error) {
 	if err != nil {
 		return true, err
 	}
-	var isBanned bool
-	for _, destination := range destinations {
-		isBanned, err = s.ofac.IsBanned("", destination)
-		if isBanned || err != nil {
-			return true, err
-		}
+
+	isBanned, err := s.ofac.IsBanned("", destinations)
+	if err != nil {
+		return true, err
 	}
-	return false, nil
+
+	return isBanned, nil
 }
 
 // GetDestinations extracts the destination addresses from the message commands
@@ -512,4 +553,69 @@ func GetDestinations(message OutboundQueueMessage) ([]string, error) {
 	}
 
 	return destinations, nil
+}
+
+func buildOutboundQueueProofs(
+	commitmentHash types.H256,
+	messages []OutboundQueueMessageWithFee,
+	messageLeaves []types.H256,
+) (*struct {
+	proofs []MessageProof
+}, error) {
+
+	Keccak256Contents := []merkle.Content{}
+	for _, leaf := range messageLeaves {
+		var content merkle.Keccak256Content
+		copy(content.X[:], leaf[:])
+		Keccak256Contents = append(Keccak256Contents, content)
+	}
+
+	tree, err := merkle.NewTree2(Keccak256Contents)
+	if err != nil {
+		return nil, err
+	}
+	root := tree.Root.Hash
+	if !bytes.Equal(root, commitmentHash[:]) {
+		return nil, fmt.Errorf(
+			"outbound queue computed merkle root '%v' doesn't match digest item's commitment hash '%v'",
+			root,
+			commitmentHash,
+		)
+	}
+
+	proofs := []MessageProof{}
+
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		messageLeaf := messageLeaves[i]
+
+		var content merkle.Keccak256Content
+		copy(content.X[:], messageLeaf[:])
+
+		messagePath, _, err := tree.MerklePath(content)
+		if err != nil {
+			return nil, fmt.Errorf("get merkle path: %w", err)
+		}
+
+		byteArrayProof := make([][32]byte, len(messagePath))
+		for i := 0; i < len(messagePath); i++ {
+			byteArrayProof[i] = ([32]byte)(messagePath[i])
+		}
+
+		proof := MerkleProof{
+			Root:        commitmentHash,
+			InnerHashes: byteArrayProof,
+		}
+
+		messageProof := MessageProof{Message: message, Proof: proof}
+
+		// Collect these commitments
+		proofs = append(proofs, messageProof)
+	}
+
+	return &struct {
+		proofs []MessageProof
+	}{
+		proofs: proofs,
+	}, nil
 }

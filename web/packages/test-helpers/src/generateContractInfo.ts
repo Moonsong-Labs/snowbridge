@@ -3,10 +3,13 @@ import path from "path"
 
 const run = async () => {
     const NetworkId = process.env.ETH_NETWORK_ID || 11155111
-    const basedir = process.env.contract_dir || "../contracts"
+    let basedir = process.env.contract_dir || "../contracts"
+    if (process.env.snowbridge_v1 == "true") {
+        basedir = process.env.v1_contract_dir || "../../snowbridge-v1/contracts"
+    }
     const DeployInfoFile = path.join(
         basedir,
-        `./broadcast/DeployLocal.sol/${NetworkId}/run-latest.json`
+        `./broadcast/DeployLocal.sol/${NetworkId}/run-latest.json`,
     )
     const BuildInfoDir = path.join(basedir, "./out")
     const DestFile =
@@ -35,8 +38,8 @@ const run = async () => {
                 let contractBuildingInfo = JSON.parse(
                     fs.readFileSync(
                         path.join(BuildInfoDir, contractName + ".sol", contractAlias + ".json"),
-                        "utf8"
-                    )
+                        "utf8",
+                    ),
                 )
                 contractInfo.abi = contractBuildingInfo.abi
                 contracts[contractName] = contractInfo

@@ -4,9 +4,29 @@ import { AbstractProvider, JsonRpcProvider, WebSocketProvider } from "ethers"
 import {
     BeefyClient,
     BeefyClient__factory,
-    IGatewayV1 as IGateway,
-    IGatewayV1__factory as IGateway__factory,
+    IGatewayV1,
+    IGatewayV1__factory,
+    IGatewayV2,
+    IGatewayV2__factory,
 } from "@snowbridge/contract-types"
+import { SNOWBRIDGE_ENV } from "./environment"
+
+export * as toPolkadotV2 from "./toPolkadot_v2"
+export * as toEthereumV2 from "./toEthereum_v2"
+export * as utils from "./utils"
+export * as status from "./status"
+export * as assetsV2 from "./assets_v2"
+export * as environment from "./environment"
+export * as historyV2 from "./history_v2"
+export * as subsquid from "./subsquid"
+export * as forKusama from "./forKusama"
+export * as forInterParachain from "./forInterParachain"
+export * as toEthereumFromEVMV2 from "./toEthereumFromEVM_v2"
+export * as parachains from "./parachains"
+export * as xcmBuilder from "./xcmBuilder"
+export * as toEthereumSnowbridgeV2 from "./toEthereumSnowbridgeV2"
+export * as neuroWeb from "./parachains/neuroweb"
+export * as toPolkadotSnowbridgeV2 from "./toPolkadotSnowbridgeV2"
 
 interface Parachains {
     [paraId: string]: ApiPromise
@@ -28,11 +48,17 @@ interface Config {
         bridgeHubParaId: number
         parachains: { [paraId: string]: string }
     }
+    kusama?: {
+        assetHubParaId: number
+        bridgeHubParaId: number
+        parachains: { [paraId: string]: string }
+    }
     appContracts: {
         gateway: string
         beefy: string
     }
-    graphqlApiUrl?: string
+    graphqlApiUrl: string
+    monitorChains?: number[]
 }
 
 export class Context {
@@ -40,16 +66,19 @@ export class Context {
 
     // Ethereum
     #ethChains: EthereumChains
-    #gateway?: IGateway
+    #gateway?: IGatewayV1
+    #gatewayV2?: IGatewayV2
     #beefyClient?: BeefyClient
 
     // Substrate
-    #parachains: Parachains
+    #polkadotParachains: Parachains
+    #kusamaParachains: Parachains
     #relaychain?: ApiPromise
 
     constructor(config: Config) {
         this.config = config
-        this.#parachains = {}
+        this.#polkadotParachains = {}
+        this.#kusamaParachains = {}
         this.#ethChains = {}
     }
 
@@ -58,17 +87,24 @@ export class Context {
             return this.#relaychain
         }
         const url = this.config.polkadot.relaychain
-        console.log('Connecting to the relaychain.')
+        console.log("Connecting to the relaychain.")
         this.#relaychain = await ApiPromise.create({
             noInitWarn: true,
             provider: url.startsWith("http") ? new HttpProvider(url) : new WsProvider(url),
         })
-        console.log('Connected to the relaychain.')
+        console.log("Connected to the relaychain.")
         return this.#relaychain
     }
 
     assetHub(): Promise<ApiPromise> {
         return this.parachain(this.config.polkadot.assetHubParaId)
+    }
+
+    kusamaAssetHub(): Promise<ApiPromise> | undefined {
+        const assetHubParaId = this.config.kusama?.assetHubParaId
+        if (assetHubParaId) {
+            return this.kusamaParachain(assetHubParaId)
+        }
     }
 
     bridgeHub(): Promise<ApiPromise> {
@@ -93,13 +129,56 @@ export class Context {
 
     async parachain(paraId: number): Promise<ApiPromise> {
         const paraIdKey = paraId.toString()
-        if (paraIdKey in this.#parachains) {
-            return this.#parachains[paraIdKey]
+        if (paraIdKey in this.#polkadotParachains) {
+            return this.#polkadotParachains[paraIdKey]
         }
         const { parachains } = this.config.polkadot
         if (paraIdKey in parachains) {
             const url = parachains[paraIdKey]
-            console.log('Connecting to parachain ', paraIdKey)
+            console.log("Connecting to parachain ", paraIdKey, url)
+            let options: any = {
+                noInitWarn: true,
+                provider: url.startsWith("http") ? new HttpProvider(url) : new WsProvider(url),
+            }
+            if (paraId === this.config.polkadot.bridgeHubParaId) {
+                options.types = {
+                    ContractCall: {
+                        target: "[u8; 20]",
+                        calldata: "Vec<u8>",
+                        value: "u128",
+                        gas: "u64",
+                    },
+                }
+            }
+            const api = await ApiPromise.create(options)
+            const onChainParaId = (
+                await api.query.parachainInfo.parachainId()
+            ).toPrimitive() as number
+            if (onChainParaId !== paraId) {
+                console.warn(
+                    `Parachain id configured does not match onchain value. Configured = ${paraId}, OnChain=${onChainParaId}, url=${url}`,
+                )
+            }
+            this.#polkadotParachains[onChainParaId] = api
+            console.log("Connected to parachain ", paraIdKey)
+            return this.#polkadotParachains[onChainParaId]
+        } else {
+            throw Error(`Parachain id ${paraId} not in the list of parachain urls.`)
+        }
+    }
+
+    async kusamaParachain(paraId: number): Promise<ApiPromise> {
+        const paraIdKey = paraId.toString()
+        if (paraIdKey in this.#kusamaParachains) {
+            return this.#kusamaParachains[paraIdKey]
+        }
+        if (!this.config.kusama) {
+            throw Error(`Kusama config is not set.`)
+        }
+        const { parachains } = this.config.kusama
+        if (paraIdKey in parachains) {
+            const url = parachains[paraIdKey]
+            console.log("Connecting to Kusama parachain ", paraIdKey, url)
             const api = await ApiPromise.create({
                 noInitWarn: true,
                 provider: url.startsWith("http") ? new HttpProvider(url) : new WsProvider(url),
@@ -109,12 +188,12 @@ export class Context {
             ).toPrimitive() as number
             if (onChainParaId !== paraId) {
                 console.warn(
-                    `Parachain id configured does not match onchain value. Configured = ${paraId}, OnChain=${onChainParaId}, url=${url}`
+                    `Parachain id configured does not match onchain value. Configured = ${paraId}, OnChain=${onChainParaId}, url=${url}`,
                 )
             }
-            this.#parachains[onChainParaId] = api
-            console.log('Connected to parachain ', paraIdKey)
-            return this.#parachains[onChainParaId]
+            this.#kusamaParachains[onChainParaId] = api
+            console.log("Connected to Kusama parachain ", paraIdKey)
+            return this.#kusamaParachains[onChainParaId]
         } else {
             throw Error(`Parachain id ${paraId} not in the list of parachain urls.`)
         }
@@ -150,11 +229,18 @@ export class Context {
         return this.ethChain(this.config.ethereum.ethChainId)
     }
 
-    gateway(): IGateway {
+    gateway(): IGatewayV1 {
         if (this.#gateway) {
             return this.#gateway
         }
-        return IGateway__factory.connect(this.config.appContracts.gateway, this.ethereum())
+        return IGatewayV1__factory.connect(this.config.appContracts.gateway, this.ethereum())
+    }
+
+    gatewayV2(): IGatewayV2 {
+        if (this.#gatewayV2) {
+            return this.#gatewayV2
+        }
+        return IGatewayV2__factory.connect(this.config.appContracts.gateway, this.ethereum())
     }
 
     beefyClient(): BeefyClient {
@@ -164,10 +250,19 @@ export class Context {
         return BeefyClient__factory.connect(this.config.appContracts.beefy, this.ethereum())
     }
 
+    graphqlApiUrl(): string {
+        return this.config.graphqlApiUrl
+    }
+
+    monitorChains(): number[] | undefined {
+        return this.config.monitorChains
+    }
+
     async destroyContext(): Promise<void> {
         // clean up contract listeners
         if (this.#beefyClient) await this.beefyClient().removeAllListeners()
         if (this.#gateway) await this.gateway().removeAllListeners()
+        if (this.#gatewayV2) await this.gatewayV2().removeAllListeners()
 
         // clean up etheruem
         for (const ethChainKey of Object.keys(this.config.ethereum.ethChains)) {
@@ -183,22 +278,79 @@ export class Context {
             await this.#relaychain.disconnect()
         }
 
-        for (const paraId of Object.keys(this.#parachains)) {
-            await this.#parachains[Number(paraId)].disconnect()
+        for (const paraId of Object.keys(this.#polkadotParachains)) {
+            await this.#polkadotParachains[Number(paraId)].disconnect()
+        }
+        for (const paraId of Object.keys(this.#kusamaParachains)) {
+            await this.#kusamaParachains[Number(paraId)].disconnect()
         }
     }
 }
 
-export * as toPolkadot from "./toPolkadot"
-export * as toPolkadotV2 from "./toPolkadot_v2"
-export * as toEthereum from "./toEthereum"
-export * as toEthereumV2 from "./toEthereum_v2"
-export * as utils from "./utils"
-export * as status from "./status"
-export * as assets from "./assets"
-export * as assetsV2 from "./assets_v2"
-export * as environment from "./environment"
-export * as subscan from "./subscan"
-export * as history from "./history"
-export * as historyV2 from "./history_v2"
-export * as subsquid from "./subsquid"
+export function contextConfigFor(
+    env: "polkadot_mainnet" | "westend_sepolia" | "paseo_sepolia" | (string & {}),
+): Config {
+    if (!(env in SNOWBRIDGE_ENV)) {
+        throw Error(`Unknown environment '${env}'.`)
+    }
+    const {
+        ethChainId,
+        config: {
+            ASSET_HUB_PARAID,
+            BEACON_HTTP_API,
+            BEEFY_CONTRACT,
+            BRIDGE_HUB_PARAID,
+            ETHEREUM_CHAINS,
+            GATEWAY_CONTRACT,
+            PARACHAINS,
+            RELAY_CHAIN_URL,
+            GRAPHQL_API_URL,
+            TO_MONITOR_PARACHAINS,
+        },
+        kusamaConfig,
+    } = SNOWBRIDGE_ENV[env]
+
+    let kusama:
+        | {
+              assetHubParaId: number
+              bridgeHubParaId: number
+              parachains: { [paraId: string]: string }
+          }
+        | undefined = undefined
+
+    if (kusamaConfig) {
+        const kusamaParachains: { [paraId: string]: string } = {}
+        kusamaParachains[kusamaConfig?.BRIDGE_HUB_PARAID.toString()] =
+            kusamaConfig?.PARACHAINS[BRIDGE_HUB_PARAID.toString()]
+        kusamaParachains[kusamaConfig?.ASSET_HUB_PARAID.toString()] =
+            kusamaConfig?.PARACHAINS[ASSET_HUB_PARAID.toString()]
+
+        kusama = {
+            assetHubParaId: kusamaConfig.ASSET_HUB_PARAID,
+            bridgeHubParaId: kusamaConfig.BRIDGE_HUB_PARAID,
+            parachains: kusamaParachains,
+        }
+    }
+
+    return {
+        environment: env,
+        ethereum: {
+            ethChainId,
+            ethChains: ETHEREUM_CHAINS,
+            beacon_url: BEACON_HTTP_API,
+        },
+        polkadot: {
+            assetHubParaId: ASSET_HUB_PARAID,
+            bridgeHubParaId: BRIDGE_HUB_PARAID,
+            parachains: PARACHAINS,
+            relaychain: RELAY_CHAIN_URL,
+        },
+        kusama,
+        appContracts: {
+            gateway: GATEWAY_CONTRACT,
+            beefy: BEEFY_CONTRACT,
+        },
+        graphqlApiUrl: GRAPHQL_API_URL,
+        monitorChains: TO_MONITOR_PARACHAINS,
+    }
+}

@@ -7,27 +7,28 @@ import {
 
 const CLOUD_WATCH_NAME_SPACE = "SnowbridgeMetrics"
 const BRIDGE_STALE_SNS_TOPIC = process.env["BRIDGE_STALE_SNS_TOPIC"] || ""
-const BRIDGE_ATTACKED_SNS_TOPIC = process.env["BRIDGE_ATTACKED_SNS_TOPIC"] || ""
 const ACCOUNT_BALANCE_SNS_TOPIC = process.env["ACCOUNT_BALANCE_SNS_TOPIC"] || ""
 
 const LatencyDashboard =
     process.env["LATENCY_DASHBOARD_URL"] ||
-    "https://eu-central-1.console.aws.amazon.com/cloudwatch/home?region=eu-central-1#dashboards/dashboard/Latency"
+    "https://eu-central-1.console.aws.amazon.com/cloudwatch/home?region=eu-central-1#dashboards/dashboard/Latency?start=PT168H&end=null"
 const BalanceDashboard =
     process.env["BALANCE_DASHBOARD_URL"] ||
-    "https://eu-central-1.console.aws.amazon.com/cloudwatch/home?region=eu-central-1#dashboards/dashboard/Balance"
+    "https://eu-central-1.console.aws.amazon.com/cloudwatch/home?region=eu-central-1#dashboards/dashboard/Balance?start=PT168H&end=null"
 
 export enum AlarmReason {
     BeefyStale = "BeefyStale",
     BeaconStale = "BeaconStale",
     ToEthereumChannelStale = "ToEthereumChannelStale",
     ToPolkadotChannelStale = "ToPolkadotChannelStale",
-    AccountBalanceInsufficient = "AccountBalanceInsufficient",
-    ToEthereumNoTransfer = "ToEthereumNoTransfer",
-    ToPolkadotNoTransfer = "ToPolkadotNoTransfer",
-    ToEthereumChannelAttacked = "ToEthereumChannelAttacked",
-    ToPolkadotChannelAttacked = "ToPolkadotChannelAttacked",
+    RelayAccountBalanceInsufficient = "RelayAccountBalanceInsufficient",
+    SovereignAccountBalanceInsufficient = "SovereignAccountBalanceInsufficient",
     IndexServiceStale = "IndexServiceStale",
+    HeartbeatLost = "HeartbeatLost",
+    ToPolkadotV2Stale = "ToPolkadotV2Stale",
+    ToEthereumV2Stale = "ToEthereumV2Stale",
+    FutureBlockVoting = "FutureBlockVoting",
+    ForkVoting = "ForkVoting",
 }
 
 export const InsufficientBalanceThreshold = {
@@ -41,34 +42,17 @@ export const InsufficientBalanceThreshold = {
         : 300_000_000_000_000_000,
 }
 
-export const BlockLatencyThreshold = {
-    // Syncing beefy finality update every 4 hours(1200 ethereum blocks), leave some buffer here
-    ToEthereum: process.env["BlockLatencyToEthereum"]
-        ? parseInt(process.env["BlockLatencyToEthereum"])
-        : 2400,
-    // Syncing beacon finality update every 6.4 minutes(64 substrate blocks), leave some buffer here
-    ToPolkadot: process.env["BlockLatencyToPolkadot"]
-        ? parseInt(process.env["BlockLatencyToPolkadot"])
-        : 120,
-}
-
+// This configuration is for setting up a CloudWatch alarm.
+// EvaluationPeriods: The number of most recent periods (data points) to evaluate when determining the alarm state.
+// DatapointsToAlarm: The number of data points within the evaluation periods that must breach the threshold to trigger the alarm.
+// For more details, see: https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html
 export const AlarmEvaluationConfiguration = {
-    ToEthereumStale: {
-        EvaluationPeriods: process.env["ToEthereumEvaluationPeriods"]
-            ? parseInt(process.env["ToEthereumEvaluationPeriods"])
-            : 18,
-        DatapointsToAlarm: process.env["ToEthereumDatapointsToAlarm"]
-            ? parseInt(process.env["ToEthereumDatapointsToAlarm"])
-            : 15,
-    },
-    ToPolkadotStale: {
-        EvaluationPeriods: process.env["ToPolkadotEvaluationPeriods"]
-            ? parseInt(process.env["ToPolkadotEvaluationPeriods"])
-            : 12,
-        DatapointsToAlarm: process.env["ToPolkadotDatapointsToAlarm"]
-            ? parseInt(process.env["ToPolkadotDatapointsToAlarm"])
-            : 10,
-    },
+    EvaluationPeriods: process.env["EvaluationPeriods"]
+        ? parseInt(process.env["EvaluationPeriods"])
+        : 4,
+    DatapointsToAlarm: process.env["DatapointsToAlarm"]
+        ? parseInt(process.env["DatapointsToAlarm"])
+        : 3,
 }
 
 export const IndexerLatencyThreshold = process.env["IndexerLatencyThreshold"]
@@ -82,43 +66,28 @@ export const ScanInterval = process.env["SCAN_INTERVAL"]
 export const sendMetrics = async (metrics: status.AllMetrics) => {
     let client = new CloudWatchClient({})
     let metricData = []
+    // Heartbeat metrics
+    metricData.push({
+        MetricName: "Heartbeat",
+        Value: 1,
+    })
     // Beefy metrics
     metricData.push({
         MetricName: "BeefyLatency",
-        Value: metrics.bridgeStatus.toEthereum.blockLatency,
+        Value: metrics.bridgeStatus.toEthereum.latencySeconds,
     })
     metricData.push({
         MetricName: "LatestBeefyBlock",
         Value: metrics.bridgeStatus.toEthereum.latestPolkadotBlockOnEthereum,
     })
-    metricData.push({
-        MetricName: "PreviousBeefyBlock",
-        Value: metrics.bridgeStatus.toEthereum.previousPolkadotBlockOnEthereum,
-    })
-    metricData.push({
-        MetricName: AlarmReason.BeefyStale.toString(),
-        Value: Number(
-            metrics.bridgeStatus.toEthereum.blockLatency > BlockLatencyThreshold.ToEthereum
-        ),
-    })
     // Beacon metrics
     metricData.push({
         MetricName: "BeaconLatency",
-        Value: metrics.bridgeStatus.toPolkadot.blockLatency,
+        Value: metrics.bridgeStatus.toPolkadot.latencySeconds,
     })
     metricData.push({
-        MetricName: "LatestBeaconBlock",
+        MetricName: "LatestBeaconSlot",
         Value: metrics.bridgeStatus.toPolkadot.latestBeaconSlotOnPolkadot,
-    })
-    metricData.push({
-        MetricName: "PreviousBeaconBlock",
-        Value: metrics.bridgeStatus.toPolkadot.previousEthereumBlockOnPolkadot,
-    })
-    metricData.push({
-        MetricName: AlarmReason.BeaconStale.toString(),
-        Value: Number(
-            metrics.bridgeStatus.toPolkadot.blockLatency > BlockLatencyThreshold.ToPolkadot
-        ),
     })
     // Channel metrics
     for (let channel of metrics.channels) {
@@ -138,16 +107,6 @@ export const sendMetrics = async (metrics: status.AllMetrics) => {
             Value: channel.toEthereum.outbound,
         })
         metricData.push({
-            MetricName: "ToEthereumPreviousOutboundNonce",
-            Dimensions: [
-                {
-                    Name: "ChannelName",
-                    Value: channel.name,
-                },
-            ],
-            Value: channel.toEthereum.previousOutbound,
-        })
-        metricData.push({
             MetricName: "ToEthereumInboundNonce",
             Dimensions: [
                 {
@@ -157,41 +116,30 @@ export const sendMetrics = async (metrics: status.AllMetrics) => {
             ],
             Value: channel.toEthereum.inbound,
         })
-        metricData.push({
-            MetricName: "ToEthereumPreviousInboundNonce",
-            Dimensions: [
-                {
-                    Name: "ChannelName",
-                    Value: channel.name,
-                },
-            ],
-            Value: channel.toEthereum.previousInbound,
-        })
-        metricData.push({
-            MetricName: "ToEthereumUndelivered",
-            Dimensions: [
-                {
-                    Name: "ChannelName",
-                    Value: channel.name,
-                },
-            ],
-            Value: channel.toEthereum.outbound - channel.toEthereum.inbound,
-        })
-        metricData.push({
-            MetricName: AlarmReason.ToEthereumChannelStale.toString(),
-            Value: Number(
-                channel.toEthereum.outbound > channel.toEthereum.inbound &&
-                    channel.toEthereum.inbound == channel.toEthereum.previousInbound
-            ),
-        })
-        metricData.push({
-            MetricName: AlarmReason.ToEthereumChannelAttacked.toString(),
-            Value: Number(channel.toEthereum.outbound < channel.toEthereum.inbound),
-        })
-        metricData.push({
-            MetricName: AlarmReason.ToEthereumNoTransfer.toString(),
-            Value: Number(channel.toEthereum.inbound == channel.toEthereum.previousInbound),
-        })
+        if (channel.toEthereum.estimatedDeliveryTime) {
+            metricData.push({
+                MetricName: "ToEthereumDeliveryEstimate",
+                Dimensions: [
+                    {
+                        Name: "ChannelName",
+                        Value: channel.name,
+                    },
+                ],
+                Value: channel.toEthereum.estimatedDeliveryTime,
+            })
+        }
+        if (channel.toEthereum.undeliveredTimeout) {
+            metricData.push({
+                MetricName: "ToEthereumUndeliveredTimeout",
+                Dimensions: [
+                    {
+                        Name: "ChannelName",
+                        Value: channel.name,
+                    },
+                ],
+                Value: channel.toEthereum.undeliveredTimeout,
+            })
+        }
         // To Polkadot
         metricData.push({
             MetricName: "ToPolkadotOutboundNonce",
@@ -204,16 +152,6 @@ export const sendMetrics = async (metrics: status.AllMetrics) => {
             Value: channel.toPolkadot.outbound,
         })
         metricData.push({
-            MetricName: "ToPolkadotPreviousOutboundNonce",
-            Dimensions: [
-                {
-                    Name: "ChannelName",
-                    Value: channel.name,
-                },
-            ],
-            Value: channel.toPolkadot.previousOutbound,
-        })
-        metricData.push({
             MetricName: "ToPolkadotInboundNonce",
             Dimensions: [
                 {
@@ -223,41 +161,30 @@ export const sendMetrics = async (metrics: status.AllMetrics) => {
             ],
             Value: channel.toPolkadot.inbound,
         })
-        metricData.push({
-            MetricName: "ToPolkadotPreviousInboundNonce",
-            Dimensions: [
-                {
-                    Name: "ChannelName",
-                    Value: channel.name,
-                },
-            ],
-            Value: channel.toPolkadot.previousInbound,
-        })
-        metricData.push({
-            MetricName: "ToPolkadotUndelivered",
-            Dimensions: [
-                {
-                    Name: "ChannelName",
-                    Value: channel.name,
-                },
-            ],
-            Value: channel.toPolkadot.outbound - channel.toPolkadot.inbound,
-        })
-        metricData.push({
-            MetricName: AlarmReason.ToPolkadotChannelStale.toString(),
-            Value: Number(
-                channel.toPolkadot.outbound > channel.toPolkadot.inbound &&
-                    channel.toPolkadot.inbound == channel.toPolkadot.previousInbound
-            ),
-        })
-        metricData.push({
-            MetricName: AlarmReason.ToPolkadotChannelAttacked.toString(),
-            Value: Number(channel.toPolkadot.outbound < channel.toPolkadot.inbound),
-        })
-        metricData.push({
-            MetricName: AlarmReason.ToPolkadotNoTransfer.toString(),
-            Value: Number(channel.toPolkadot.inbound == channel.toPolkadot.previousInbound),
-        })
+        if (channel.toPolkadot.estimatedDeliveryTime) {
+            metricData.push({
+                MetricName: "ToPolkadotDeliveryEstimate",
+                Dimensions: [
+                    {
+                        Name: "ChannelName",
+                        Value: channel.name,
+                    },
+                ],
+                Value: channel.toPolkadot.estimatedDeliveryTime,
+            })
+        }
+        if (channel.toPolkadot.undeliveredTimeout) {
+            metricData.push({
+                MetricName: "ToPolkadotUndeliveredTimeout",
+                Dimensions: [
+                    {
+                        Name: "ChannelName",
+                        Value: channel.name,
+                    },
+                ],
+                Value: channel.toPolkadot.undeliveredTimeout,
+            })
+        }
     }
     for (let relayer of metrics.relayers) {
         metricData.push({
@@ -270,14 +197,6 @@ export const sendMetrics = async (metrics: status.AllMetrics) => {
             ],
             Value: Number(relayer.balance),
         })
-        if (relayer.type == "substrate") {
-            metricData.push({
-                MetricName: AlarmReason.AccountBalanceInsufficient.toString(),
-                Value: Number(
-                    !relayer.balance || relayer.balance < InsufficientBalanceThreshold.Substrate
-                ),
-            })
-        }
     }
     for (let sovereign of metrics.sovereigns) {
         metricData.push({
@@ -290,16 +209,7 @@ export const sendMetrics = async (metrics: status.AllMetrics) => {
             ],
             Value: Number(sovereign.balance),
         })
-        if (sovereign.type == "substrate") {
-            metricData.push({
-                MetricName: AlarmReason.AccountBalanceInsufficient.toString(),
-                Value: Number(
-                    !sovereign.balance || sovereign.balance < InsufficientBalanceThreshold.Substrate
-                ),
-            })
-        }
     }
-    let indexerStale = false
     for (let status of metrics.indexerStatus) {
         metricData.push({
             MetricName: "IndexerLatency",
@@ -311,19 +221,37 @@ export const sendMetrics = async (metrics: status.AllMetrics) => {
             ],
             Value: Number(status.latency),
         })
-        indexerStale = status.latency > IndexerLatencyThreshold
-        if (indexerStale) {
-            break
-        }
     }
-    metricData.push({
-        MetricName: AlarmReason.IndexServiceStale.toString(),
-        Value: Number(indexerStale),
-    })
+    // V2 metrics
+    if (metrics.v2Status?.toEthereum.estimatedDeliveryTime) {
+        metricData.push({
+            MetricName: "ToEthereumV2DeliveryEstimate",
+            Value: metrics.v2Status?.toEthereum.estimatedDeliveryTime,
+        })
+    }
+    if (metrics.v2Status?.toPolkadot.estimatedDeliveryTime) {
+        metricData.push({
+            MetricName: "ToPolkadotV2DeliveryEstimate",
+            Value: metrics.v2Status?.toPolkadot.estimatedDeliveryTime,
+        })
+    }
+    if (metrics.v2Status?.toEthereum.undeliveredTimeout) {
+        metricData.push({
+            MetricName: "ToEthereumV2UndeliveredTimeout",
+            Value: metrics.v2Status?.toEthereum.undeliveredTimeout,
+        })
+    }
+    if (metrics.v2Status?.toPolkadot.undeliveredTimeout) {
+        metricData.push({
+            MetricName: "ToPolkadotV2UndeliveredTimeout",
+            Value: metrics.v2Status?.toPolkadot.undeliveredTimeout,
+        })
+    }
     const command = new PutMetricDataCommand({
         MetricData: metricData,
         Namespace: CLOUD_WATCH_NAME_SPACE + "-" + metrics.name,
     })
+    console.log("Sent metrics:", JSON.stringify(metricData, null, 2))
     await client.send(command)
 }
 
@@ -342,154 +270,254 @@ export const initializeAlarms = async () => {
     let cloudWatchAlarms = []
     let alarmCommandSharedInput: any = {
         Namespace: CLOUD_WATCH_NAME_SPACE + "-" + name,
-        Threshold: 0,
-    }
-    if (name == "polkadot_mainnet") {
-        alarmCommandSharedInput.TreatMissingData = "breaching"
+        TreatMissingData: "notBreaching",
+        Period: ScanInterval,
+        Statistic: "Average",
+        ComparisonOperator: "GreaterThanThreshold",
+        EvaluationPeriods: AlarmEvaluationConfiguration.EvaluationPeriods,
+        DatapointsToAlarm: AlarmEvaluationConfiguration.DatapointsToAlarm,
     }
 
-    // Alarm for stale bridge
+    // For alarms that need to trigger when an absolute value breaches a
+    // threshold. For this case dont wait for 3/4 datapoints in a 15 minute
+    // window(45 min) as it will take a minimum of 45 minutes before alarms are
+    // triggered. Use 5 minutes instead. Alarm uses maximum statistic because
+    // so that it alarms when the maximum value is breaching within a time
+    // window.
+    // e.g. bridge latency greater than x seconds.
+    // e.g. nonce difference greater than x messages.
+    let absoluteValueBreachingAlarmConfig: any = {
+        Namespace: CLOUD_WATCH_NAME_SPACE + "-" + name,
+        TreatMissingData: "notBreaching",
+        Period: 60 * 5,
+        Statistic: "Maximum",
+        EvaluationPeriods: 1,
+        DatapointsToAlarm: 1,
+    }
+
+    // Beefy stale
     cloudWatchAlarms.push(
         new PutMetricAlarmCommand({
             AlarmName: AlarmReason.BeefyStale.toString() + "-" + name,
-            MetricName: AlarmReason.BeefyStale.toString(),
+            MetricName: "BeefyLatency",
             AlarmDescription: LatencyDashboard,
-            Statistic: "Average",
-            ComparisonOperator: "GreaterThanThreshold",
             AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
-            EvaluationPeriods: AlarmEvaluationConfiguration.ToEthereumStale.EvaluationPeriods,
-            Period: ScanInterval,
-            DatapointsToAlarm: AlarmEvaluationConfiguration.ToEthereumStale.DatapointsToAlarm,
             ...alarmCommandSharedInput,
-        })
+            Threshold: 3600 * 4, // 1 epoch = 4 hours
+        }),
     )
+    // Beacon stale
     cloudWatchAlarms.push(
         new PutMetricAlarmCommand({
             AlarmName: AlarmReason.BeaconStale.toString() + "-" + name,
-            MetricName: AlarmReason.BeaconStale.toString(),
+            MetricName: "BeaconLatency",
             AlarmDescription: LatencyDashboard,
-            Statistic: "Average",
-            ComparisonOperator: "GreaterThanThreshold",
             AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
-            EvaluationPeriods: AlarmEvaluationConfiguration.ToPolkadotStale.EvaluationPeriods,
-            Period: ScanInterval,
-            DatapointsToAlarm: AlarmEvaluationConfiguration.ToPolkadotStale.DatapointsToAlarm,
             ...alarmCommandSharedInput,
-        })
+            Threshold: 1500, // 3 epochs = 3 * 6.4 mins ~= 20 mins
+        }),
     )
+
+    // To Ethereum channel stale
     cloudWatchAlarms.push(
         new PutMetricAlarmCommand({
             AlarmName: AlarmReason.ToEthereumChannelStale.toString() + "-" + name,
-            MetricName: AlarmReason.ToEthereumChannelStale.toString(),
+            MetricName: "ToEthereumUndeliveredTimeout",
+            Dimensions: [
+                {
+                    Name: "ChannelName",
+                    Value: "AssetHub",
+                },
+            ],
             AlarmDescription: LatencyDashboard,
-            Statistic: "Average",
-            ComparisonOperator: "GreaterThanThreshold",
             AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
-            EvaluationPeriods: AlarmEvaluationConfiguration.ToEthereumStale.EvaluationPeriods,
-            Period: ScanInterval,
-            DatapointsToAlarm: AlarmEvaluationConfiguration.ToEthereumStale.DatapointsToAlarm,
-            ...alarmCommandSharedInput,
-        })
+            ComparisonOperator: "GreaterThanThreshold",
+            ...absoluteValueBreachingAlarmConfig,
+            Threshold: 5400, // 1.5 hours at most
+        }),
     )
+
+    // To Polkadot channel stale
     cloudWatchAlarms.push(
         new PutMetricAlarmCommand({
             AlarmName: AlarmReason.ToPolkadotChannelStale.toString() + "-" + name,
-            MetricName: AlarmReason.ToPolkadotChannelStale.toString(),
+            MetricName: "ToPolkadotUndeliveredTimeout",
+            Dimensions: [
+                {
+                    Name: "ChannelName",
+                    Value: "AssetHub",
+                },
+            ],
             AlarmDescription: LatencyDashboard,
-            Statistic: "Average",
-            ComparisonOperator: "GreaterThanThreshold",
             AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
-            EvaluationPeriods: AlarmEvaluationConfiguration.ToPolkadotStale.EvaluationPeriods,
-            Period: ScanInterval,
-            DatapointsToAlarm: AlarmEvaluationConfiguration.ToPolkadotStale.DatapointsToAlarm,
-            ...alarmCommandSharedInput,
-        })
-    )
-    cloudWatchAlarms.push(
-        new PutMetricAlarmCommand({
-            AlarmName: AlarmReason.ToEthereumChannelAttacked.toString() + "-" + name,
-            MetricName: AlarmReason.ToEthereumChannelAttacked.toString(),
-            AlarmDescription: LatencyDashboard,
-            Statistic: "Average",
             ComparisonOperator: "GreaterThanThreshold",
-            AlarmActions: [BRIDGE_ATTACKED_SNS_TOPIC],
-            EvaluationPeriods: 6,
-            Period: ScanInterval,
-            ...alarmCommandSharedInput,
-        })
+            ...absoluteValueBreachingAlarmConfig,
+            Threshold: 1800, // 0.5 hour
+        }),
     )
-    cloudWatchAlarms.push(
-        new PutMetricAlarmCommand({
-            AlarmName: AlarmReason.ToPolkadotChannelAttacked.toString() + "-" + name,
-            MetricName: AlarmReason.ToPolkadotChannelAttacked.toString(),
-            AlarmDescription: LatencyDashboard,
-            Statistic: "Average",
-            ComparisonOperator: "GreaterThanThreshold",
-            AlarmActions: [BRIDGE_ATTACKED_SNS_TOPIC],
-            EvaluationPeriods: 6,
-            Period: ScanInterval,
+
+    // Insufficient balance in the relay account
+    for (const relayName of ["beacon", "execution-assethub"]) {
+        let relayAccountBalanceAlarm = new PutMetricAlarmCommand({
+            AlarmName:
+                AlarmReason.RelayAccountBalanceInsufficient.toString() +
+                "-" +
+                name +
+                "-" +
+                relayName,
+            MetricName: "BalanceOfRelayer",
+            Dimensions: [
+                {
+                    Name: "RelayerName",
+                    Value: relayName,
+                },
+            ],
+            AlarmDescription: BalanceDashboard,
+            AlarmActions: [ACCOUNT_BALANCE_SNS_TOPIC],
             ...alarmCommandSharedInput,
+            ComparisonOperator: "LessThanThreshold",
+            Threshold: InsufficientBalanceThreshold.Substrate,
         })
-    )
-    // For westend alarm when there is no transfer(i.e. nonce not increased) for more than 1 day
-    if (name == "westend_sepolia") {
-        cloudWatchAlarms.push(
-            new PutMetricAlarmCommand({
-                AlarmName: AlarmReason.ToEthereumNoTransfer.toString() + "-" + name,
-                MetricName: AlarmReason.ToEthereumNoTransfer.toString(),
-                AlarmDescription: LatencyDashboard,
-                Statistic: "Average",
-                ComparisonOperator: "GreaterThanThreshold",
-                AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
-                EvaluationPeriods: 3,
-                Period: 21600,
-                ...alarmCommandSharedInput,
-            })
-        )
-        cloudWatchAlarms.push(
-            new PutMetricAlarmCommand({
-                AlarmName: AlarmReason.ToPolkadotNoTransfer.toString() + "-" + name,
-                MetricName: AlarmReason.ToPolkadotNoTransfer.toString(),
-                AlarmDescription: LatencyDashboard,
-                Statistic: "Average",
-                ComparisonOperator: "GreaterThanThreshold",
-                AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
-                EvaluationPeriods: 3,
-                Period: 21600,
-                ...alarmCommandSharedInput,
-            })
-        )
+        cloudWatchAlarms.push(relayAccountBalanceAlarm)
     }
 
+    // Insufficient balance in the sovereign account
+    let sovereignAccountBalanceAlarm = new PutMetricAlarmCommand({
+        AlarmName: AlarmReason.SovereignAccountBalanceInsufficient.toString() + "-" + name,
+        MetricName: "BalanceOfSovereign",
+        Dimensions: [
+            {
+                Name: "SovereignName",
+                Value: "AssetHub",
+            },
+        ],
+        AlarmDescription: BalanceDashboard,
+        AlarmActions: [ACCOUNT_BALANCE_SNS_TOPIC],
+        ...alarmCommandSharedInput,
+        ComparisonOperator: "LessThanThreshold",
+        Threshold: InsufficientBalanceThreshold.Substrate,
+    })
+    cloudWatchAlarms.push(sovereignAccountBalanceAlarm)
+
+    // Indexer service stale
+    for (const chain of [
+        "assethub",
+        "bridgehub",
+        "ethereum",
+        "kusama_assethub",
+        "hydration",
+        "neuroweb",
+        "mythos",
+    ]) {
+        let indexerAlarm = new PutMetricAlarmCommand({
+            AlarmName: AlarmReason.IndexServiceStale.toString() + "-" + name + "-" + chain,
+            MetricName: "IndexerLatency",
+            Dimensions: [
+                {
+                    Name: "ChainName",
+                    Value: chain,
+                },
+            ],
+            AlarmDescription: AlarmReason.IndexServiceStale.toString(),
+            AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
+            ComparisonOperator: "GreaterThanThreshold",
+            ...absoluteValueBreachingAlarmConfig,
+            Threshold: IndexerLatencyThreshold,
+        })
+        cloudWatchAlarms.push(indexerAlarm)
+    }
+
+    // Heartbeat lost
+    let heartbeartAlarm = new PutMetricAlarmCommand({
+        AlarmName: AlarmReason.HeartbeatLost.toString() + "-" + name,
+        MetricName: "Heartbeat",
+        AlarmDescription: AlarmReason.HeartbeatLost.toString(),
+        AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
+        ...alarmCommandSharedInput,
+        ComparisonOperator: "LessThanThreshold",
+        Threshold: 1,
+        TreatMissingData: "breaching",
+    })
+    cloudWatchAlarms.push(heartbeartAlarm)
+
+    // To Ethereum V2 stale
+    cloudWatchAlarms.push(
+        new PutMetricAlarmCommand({
+            AlarmName: AlarmReason.ToEthereumV2Stale.toString() + "-" + name,
+            MetricName: "ToEthereumV2UndeliveredTimeout",
+            AlarmDescription: LatencyDashboard,
+            AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
+            ...alarmCommandSharedInput,
+            Threshold: 5400, // 1.5 hours at most
+        }),
+    )
+
+    // To Polkadot V2 stale
+    cloudWatchAlarms.push(
+        new PutMetricAlarmCommand({
+            AlarmName: AlarmReason.ToPolkadotV2Stale.toString() + "-" + name,
+            MetricName: "ToPolkadotV2UndeliveredTimeout",
+            AlarmDescription: LatencyDashboard,
+            AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
+            ...alarmCommandSharedInput,
+            Threshold: 1800, // 0.5 hour
+        }),
+    )
+
+    // Fisherman FutureBlockVoting equivocation alarm
+    cloudWatchAlarms.push(
+        new PutMetricAlarmCommand({
+            AlarmName: AlarmReason.FutureBlockVoting.toString() + "-" + name,
+            MetricName: AlarmReason.FutureBlockVoting.toString(),
+            AlarmDescription: AlarmReason.FutureBlockVoting.toString(),
+            AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
+            ...alarmCommandSharedInput,
+            Period: 120,
+            EvaluationPeriods: 1,
+            DatapointsToAlarm: 1,
+            Threshold: 0,
+        }),
+    )
+    // Fisherman ForkVoting equivocation alarm
+    cloudWatchAlarms.push(
+        new PutMetricAlarmCommand({
+            AlarmName: AlarmReason.ForkVoting.toString() + "-" + name,
+            MetricName: AlarmReason.ForkVoting.toString(),
+            AlarmDescription: AlarmReason.ForkVoting.toString(),
+            AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
+            ...alarmCommandSharedInput,
+            Period: 120,
+            EvaluationPeriods: 1,
+            DatapointsToAlarm: 1,
+            Threshold: 0,
+        }),
+    )
+
+    // Send all alarms
     for (let alarm of cloudWatchAlarms) {
         await client.send(alarm)
     }
+}
 
-    // Alarm for account balance insufficient
-    let accountBalanceAlarm = new PutMetricAlarmCommand({
-        AlarmName: AlarmReason.AccountBalanceInsufficient.toString() + "-" + name,
-        MetricName: AlarmReason.AccountBalanceInsufficient.toString(),
-        AlarmDescription: BalanceDashboard,
-        Statistic: "Average",
-        ComparisonOperator: "GreaterThanThreshold",
-        AlarmActions: [ACCOUNT_BALANCE_SNS_TOPIC],
-        EvaluationPeriods: 6,
-        Period: ScanInterval,
-        ...alarmCommandSharedInput,
+const sendFishermanAlarm = async (nameSpace: string, reason: AlarmReason, blockNumber: number) => {
+    let client = new CloudWatchClient({})
+    let metricData = [] // Fisherman metrics
+    metricData.push({
+        MetricName: reason.toString(),
+        Value: blockNumber,
     })
-    await client.send(accountBalanceAlarm)
+    const command = new PutMetricDataCommand({
+        MetricData: metricData,
+        Namespace: CLOUD_WATCH_NAME_SPACE + "-" + nameSpace,
+    })
+    console.log("Sent fisherman alarm:", JSON.stringify(metricData, null, 2))
+    await client.send(command)
+}
 
-    // Alarm for indexer service
-    let indexerAlarm = new PutMetricAlarmCommand({
-        AlarmName: AlarmReason.IndexServiceStale.toString() + "-" + name,
-        MetricName: AlarmReason.IndexServiceStale.toString(),
-        AlarmDescription: AlarmReason.IndexServiceStale.toString(),
-        Statistic: "Average",
-        ComparisonOperator: "GreaterThanThreshold",
-        AlarmActions: [BRIDGE_STALE_SNS_TOPIC],
-        EvaluationPeriods: 6,
-        Period: ScanInterval,
-        ...alarmCommandSharedInput,
-    })
-    await client.send(indexerAlarm)
+export const sendForkVotingAlarm = async (nameSpace: string, blockNumber: number) => {
+    await sendFishermanAlarm(nameSpace, AlarmReason.ForkVoting, blockNumber)
+}
+
+export const sendFutureBlockVotingAlarm = async (nameSpace: string, blockNumber: number) => {
+    await sendFishermanAlarm(nameSpace, AlarmReason.FutureBlockVoting, blockNumber)
 }
